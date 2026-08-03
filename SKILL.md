@@ -1,0 +1,52 @@
+---
+name: consult
+description: Consult GPT-5.6 Pro through the local agbrowse web UI — research, design, current external evidence, hard implementation strategy, blocked debugging, risky refactors, test design, second opinions, and code work it builds and exercises in its own sandbox. Costs latency rather than quota, so reach for it whenever intelligence is the bottleneck and let it run in the background. Returned advice is evidence to verify locally; returned code is a draft to review, never auto-applied.
+---
+
+# Consult
+
+Send one self-contained packet to the ChatGPT web UI through `agbrowse web-ai`, bring GPT-5.6 Pro's answer back as evidence, and act on it only after local verification.
+
+Consult carries two kinds of load, not just questions. An **advice consult** buys the strongest single read available — research, design, diagnosis, review. A **work consult** hands Pro a complete piece of work it builds and exercises in its own sandbox — implementation, a patch, tests, a runnable experiment — through code mode (see Code artifacts). When the task is buildable, prefer handing the whole build over asking how to build it: the sandbox result is stronger evidence than an opinion. The boundary is sandbox fit, not difficulty — a work consult needs all inputs to travel in the packet and verification to run inside Pro's sandbox; code that depends on local services, databases, or repo state the sandbox cannot reach gets an advice consult on strategy or review instead, so a passing artifact never fakes confidence its dependencies were never tested against.
+
+## Workflow
+
+1. State one precise consult question and what a decisive answer would settle. For a work consult, state the deliverable and its acceptance criteria instead, and submit through `scripts/run_agbrowse_code.py` at step 3 — the packet discipline below applies unchanged.
+2. Write one focused, self-contained packet directly from the evidence already gathered — the sending agent owns the question, the evidence selection, and the final text. Include everything that can change the answer: the exact question, code or diff excerpts with paths, decisive logs, constraints, failed attempts, acceptance criteria. There is no size cap — completeness beats brevity. Use read-only subagents only when two or more independent evidence branches (code/diff history, runtime/tests, current external docs) each need real digging; they return minimal decisive excerpts and the main agent decides what enters the packet. Before sending, read the finished packet once for secrets, unnecessary personal data, and stale or missing context.
+3. Submit with `scripts/run_agbrowse_consult.py` in the background and keep working — Pro thinks for minutes. A packet is a file transport: `--packet` and `--follow-up-file` must be uploaded as attachments, and their bodies must never be pasted into the ChatGPT composer. Use inline transport only for a genuinely short `--follow-up "..."`. The helper enforces this boundary, records the topic and artifacts, verifies submit before polling, and saves the committed provider session immediately so a later process can recover it. Responses and evidence land under `.consult/`; read the answer from the saved response file, not from a terminal or tool-output capture, which can clamp long responses. Independent questions run concurrently, one helper process each with run-specific artifact paths; `references/runbook.md` has the exact commands, flags, history lookup, recovery, and the parallel recipe.
+4. Trust only a response the helper validated. On a routing mismatch it exits nonzero and quarantines the raw answer under `MISROUTED-` names — never treat quarantined output as the answer.
+5. Before a follow-up or recovery, run `scripts/consult_history.py recent`, choose the exact topic/run, and use its saved session rather than guessing from whichever `.consult/` directory is nearby. Follow up in that session for narrow questions or rebuttals; build a new packet when material facts changed. Calls to the same saved session serialize; unrelated sessions stay parallel.
+6. Read the response critically: verify each material claim against repository evidence, tests, or current primary sources, and watch for internal inconsistencies and unstated assumptions. When a claim is weak, inconsistent, or strategy-changing, send a rebuttal and continue until positions converge or the disagreement is clearly mapped. Wholesale acceptance is a consult failure equal to ignoring the advice.
+7. Apply only changes the main session independently accepts and verifies.
+
+`references/context-checklist.md` when a complex packet risks missing material context. `references/after-advice.md` before applying advice or inspecting a returned code archive.
+
+## Quality tiers
+
+Default is `--quality pro` (GPT-5.6 Pro) — take it whenever answer quality matters more than arrival time. Step down deliberately when latency or usage outweighs the expected quality gain: `xhigh` (GPT-5.6 Thinking / Extra High) for hard work that cannot wait for Pro, `high` for routine second reads. Faster settings only for an explicit smoke test.
+
+Selection fails closed: if the visible model picker cannot verify the requested GPT-5.6 family and tier, the consult stops before sending — an unverified current model is not an acceptable fallback.
+
+## Response language
+
+The reader of every consult result is a Korean speaker. Ask for a Korean report while leaving structure, depth, terminology, and rhetoric open to the consultant's judgment:
+
+> 답변은 한국어 보고서로 작성해 주세요. 문제에 맞는 구조와 표현을 자유롭게 선택하되, 자연스럽고 읽기 쉽게 설명해 주세요. 기술 용어와 영문 표현은 도움이 될 때 자유롭게 사용해도 됩니다.
+
+The packet body itself can be in whichever language expresses the problem most precisely — mixing is fine — but the requested output language is always Korean. Do not impose a fixed conclusion/rationale/action template or ban useful jargon by default. If a response comes back in English anyway, send a short follow-up asking for the same content in Korean rather than translating it locally, so the evidence saved under `.consult/` stays in the language the reader will use.
+
+## Boundaries
+
+- One browser owner: run `scripts/ensure_consult_chrome.py --ensure` first and use only the shared headed Chrome it manages. **Never** use private ChatGPT endpoints, token or cookie extraction, stealth, hosted browsers, reverse proxies, or access-control bypasses. `references/web-automation-boundaries.md` has the full allowed/not-allowed list and runtime constants.
+- **Never** put secrets, credentials, private keys, customer data, or unnecessary personal data in a packet.
+- Login, CAPTCHA, MFA, and other human security steps belong to the user in the visible browser.
+- `agbrowse` is a global package — confirm the installed version and release evidence, then get authorization before updating it.
+- One profile, one browser instance. Concurrency comes from agbrowse `--parallel` tabs and parallel-safe saved sessions, never from cloned profiles or extra headed browsers.
+
+## Code artifacts
+
+`scripts/run_agbrowse_code.py` when the deliverable is code Pro builds and exercises in its own sandbox — a draft, a patch, or a zip package. Hand it real implementation whenever the build is hard enough that Pro's brain pays for the round trip. Artifacts save under `.consult/code-artifacts/`; read the plan first, inspect the diff in isolation, apply only reviewed parts, and run local tests. A generated archive is input to review, not a patch to apply.
+
+## Completion
+
+Report the consult question, source/session evidence, advice accepted or rejected with reasons, local verification results, and remaining uncertainty. Mark project selection or other unverified environment assumptions explicitly.
