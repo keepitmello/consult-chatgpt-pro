@@ -30,4 +30,8 @@ python3 scripts/ensure_consult_chrome.py --ensure
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
 ```
 
+The query and code helpers close their own provider tab and call
+`scripts/ensure_consult_chrome.py --hide-if-idle` on completion. A later
+follow-up recovers its saved conversation URL into a new owned tab.
+
 Install by copying the extracted `consult` directory into an Agent Skills root such as `~/.codex/skills/`, `~/.agents/skills/`, or a project-local skills directory.

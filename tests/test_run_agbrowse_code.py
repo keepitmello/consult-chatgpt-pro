@@ -37,7 +37,7 @@ print(json.dumps({"artifact": {"outputPath": str(output)}}))
 
 
 FAKE_LAUNCHER = r'''#!/bin/sh
-printf '%s\n' "$*" > "$FAKE_LAUNCHER_RECORD"
+printf '%s\n' "$*" >> "$FAKE_LAUNCHER_RECORD"
 '''
 
 
@@ -90,7 +90,10 @@ class ConsultCodeChromeRouteTest(unittest.TestCase):
             os.environ.update(previous)
 
         self.assertEqual(result, 0)
-        self.assertEqual(self.launcher_record.read_text(encoding="utf-8").strip(), "--ensure")
+        self.assertEqual(
+            self.launcher_record.read_text(encoding="utf-8").splitlines(),
+            ["--ensure", "--hide-if-idle"],
+        )
         invocation = json.loads(self.agbrowse_record.read_text(encoding="utf-8"))
         self.assertEqual(invocation["cdpPort"], "9222")
         self.assertEqual(invocation["autoStart"], "0")

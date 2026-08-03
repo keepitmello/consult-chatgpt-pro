@@ -25,7 +25,13 @@ from consult_prompt_contract import (
     extract_consult_title,
 )
 from consult_history import append_event as append_history_event
-from consult_runtime import CDP_PORT, browser_env, chrome_launcher
+from consult_runtime import (
+    CDP_PORT,
+    browser_env,
+    chrome_launcher,
+    close_session_tab,
+    stop_chrome_if_idle,
+)
 
 
 PREFERRED_KEYS = (
@@ -718,6 +724,7 @@ def main(argv: Sequence[str]) -> int:
         print(f"failed to reserve consult output paths: {error}", file=sys.stderr)
         return 75
 
+    owned_session_id: str | None = None
     try:
         try:
             if follow_up and not session_id:
@@ -872,6 +879,8 @@ def main(argv: Sequence[str]) -> int:
                     )
                     print(f"agbrowse send failed; see {send_json_path} and {args.stderr_output}", file=sys.stderr)
                     return send_proc.returncode or 1
+
+                owned_session_id = submitted_session_id
 
                 record_history(
                     "submitted",
@@ -1085,6 +1094,8 @@ def main(argv: Sequence[str]) -> int:
             print(str(error), file=sys.stderr)
             return 75
     finally:
+        close_session_tab(owned_session_id, env)
+        stop_chrome_if_idle(env)
         claim_stack.close()
 
 

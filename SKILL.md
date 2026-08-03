@@ -37,7 +37,7 @@ The packet body itself can be in whichever language expresses the problem most p
 
 ## Boundaries
 
-- One browser owner: run `scripts/ensure_consult_chrome.py --ensure` first and use only the shared headed Chrome it manages. **Never** use private ChatGPT endpoints, token or cookie extraction, stealth, hosted browsers, reverse proxies, or access-control bypasses. `references/web-automation-boundaries.md` has the full allowed/not-allowed list and runtime constants.
+- One browser owner: use only `scripts/ensure_consult_chrome.py`, which serializes startup on port 9222 and stops Chrome after the invocation closes its exact provider tab. **Never** use private ChatGPT endpoints, token or cookie extraction, stealth, hosted browsers, reverse proxies, or access-control bypasses. `references/web-automation-boundaries.md` has the full allowed/not-allowed list and runtime constants.
 - **Never** put secrets, credentials, private keys, customer data, or unnecessary personal data in a packet.
 - Login, CAPTCHA, MFA, and other human security steps belong to the user in the visible browser.
 - `agbrowse` is a global package — confirm the installed version and release evidence, then get authorization before updating it.

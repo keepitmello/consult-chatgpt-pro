@@ -38,7 +38,8 @@ class ConsultRuntimeTest(unittest.TestCase):
         launcher_source = MODULE.chrome_launcher({}).read_text(encoding="utf-8")
 
         self.assertIn('"--no-startup-window"', launcher_source)
-        self.assertNotIn('"about:blank"', launcher_source)
+        self.assertIn('"--disable-features=MacAppCodeSignClone"', launcher_source)
+        self.assertNotIn('                "about:blank",', launcher_source)
 
 
 if __name__ == "__main__":

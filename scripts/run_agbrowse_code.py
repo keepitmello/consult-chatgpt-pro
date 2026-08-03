@@ -14,7 +14,7 @@ import sys
 from typing import Any, Sequence
 from zipfile import BadZipFile, ZipFile
 
-from consult_runtime import browser_env, chrome_launcher
+from consult_runtime import browser_env, chrome_launcher, close_session_tab, stop_chrome_if_idle
 
 
 DEFAULT_CONFIG = Path.home() / ".codex" / "consult.env"
@@ -233,15 +233,20 @@ def main(argv: Sequence[str]) -> int:
             check=False,
         )
     stdout = read_text(json_path)
+    payload = parse_json_or_none(stdout)
+    owned_session_id = payload.get("sessionId") if isinstance(payload, dict) else None
     if proc.returncode != 0:
+        close_session_tab(owned_session_id, env)
+        stop_chrome_if_idle(env)
         print(f"agbrowse code mode failed with exit code {proc.returncode}; see {stderr_path}", file=sys.stderr)
         return proc.returncode
 
-    payload = parse_json_or_none(stdout)
     write_session_file(session_path, payload)
     artifact_paths = collect_artifact_paths(payload)
     missing_plan = [str(path) for path in artifact_paths if not zip_has_plan(path)]
     if missing_plan:
+        close_session_tab(owned_session_id, env)
+        stop_chrome_if_idle(env)
         print(f"zip verification failed or PLAN.md missing: {', '.join(missing_plan)}", file=sys.stderr)
         return 1
 
@@ -254,6 +259,8 @@ def main(argv: Sequence[str]) -> int:
     print(f"wrote agbrowse evidence: {json_path.resolve()}")
     if session_path.exists():
         print(f"saved code session: {session_path.resolve()}")
+    close_session_tab(owned_session_id, env)
+    stop_chrome_if_idle(env)
     return 0
 
 
