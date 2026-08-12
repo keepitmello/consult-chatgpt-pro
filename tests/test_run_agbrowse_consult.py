@@ -259,6 +259,41 @@ class ConsultHelperTest(unittest.TestCase):
         self.assertEqual(child_env["rawPrompt"], "1")
         self.assertIn("agbrowse_raw_prompt_register.mjs", child_env["nodeOptions"])
 
+    def test_loader_adds_pointer_fallback_for_current_chatgpt_model_pill(self) -> None:
+        loader = HELPER.parent / "agbrowse_raw_prompt_loader.mjs"
+        script = r'''
+const { load } = await import(process.argv[1]);
+process.env.CONSULT_AGBROWSE_RAW_PROMPT = '1';
+const marker = `            await composerPill.click({ timeout: 5_000 });
+            await page.waitForTimeout(400).catch(() => undefined);
+            if (await isModelMenuOpen(page)) {
+                await assertOpenMenuIsNotWorkPicker(page);
+                return;
+            }`;
+const powerRoot = `const CHATGPT_POWER_PICKER_ROOT_SELECTOR =
+    '[role="menu"][data-state="open"]:has([role="menuitem"][aria-label="Power"])';`;
+const preflight = `async function assertChatSurfaceForModelMutation(page) {
+    const { detectChatGptComposerSurface } = await import('./product-surfaces.mjs');`;
+const result = await load(
+    'file:///tmp/agbrowse/web-ai/chatgpt-model.mjs',
+    {},
+    async () => ({ format: 'module', source: `${powerRoot}\n${preflight}\n${marker}` }),
+);
+process.stdout.write(String(result.source));
+'''
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script, loader.resolve().as_uri()],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("composer-model-pill-pointer", result.stdout)
+        self.assertIn("page.mouse.click", result.stdout)
+        self.assertIn("composer-model-picker-slider-simple-view", result.stdout)
+        self.assertIn("modal-conversation-history-rate-limit", result.stdout)
+
     def test_initial_call_derives_distinct_title_and_adds_open_korean_preference(self) -> None:
         packet = self.root / "title.md"
         packet.write_text(

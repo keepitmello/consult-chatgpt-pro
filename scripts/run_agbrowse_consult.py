@@ -54,7 +54,60 @@ QUALITY_PRESETS: dict[str, tuple[str, str | None]] = {
 }
 PINNED_THINKING_MODELS = {"thinking"}
 PINNED_PRO_MODELS = {"pro"}
+# agbrowse reports an unenforced model tier as a *warning* on an otherwise
+# successful `status: "sent"` payload, so a consult can silently run on whatever
+# model the tab happened to be showing. These are the phrases it uses when the
+# requested tier was not actually applied; the success path instead says things
+# like "model selected: pro (already selected)".
+MODEL_NOT_ENFORCED_MARKERS = (
+    "not enforced",
+    "not verified",
+    "model selector not found",
+)
+MODEL_UNAVAILABLE_FALLBACKS = (
+    "model-selector-unavailable-current-model",
+    "model-verification-unavailable-current-model",
+)
+MODEL_UNENFORCED_EXIT_CODE = 4
 DEFAULT_LOCK_TIMEOUT_SECONDS = 65 * 60
+
+
+def detect_model_not_enforced(send_payload: object, requested_model: str) -> str | None:
+    """Return a human-readable reason when agbrowse did not apply the requested model.
+
+    agbrowse fails *open* on model selection: when it cannot drive the ChatGPT
+    model picker it keeps the current model, records a warning, and still returns
+    ok/sent. The consult contract is the opposite - an unverified model is not an
+    acceptable fallback - so the wrapper has to read those signals itself.
+    """
+    if not isinstance(send_payload, dict):
+        return None
+
+    warnings = send_payload.get("warnings")
+    if isinstance(warnings, list):
+        for warning in warnings:
+            text = str(warning)
+            lowered = text.lower()
+            if any(marker in lowered for marker in MODEL_NOT_ENFORCED_MARKERS):
+                return text.strip()
+
+    fallbacks = send_payload.get("usedFallbacks")
+    if isinstance(fallbacks, list):
+        for fallback in fallbacks:
+            if str(fallback) in MODEL_UNAVAILABLE_FALLBACKS:
+                return f"agbrowse fell back to the current model (usedFallbacks: {fallback})"
+
+    selection = send_payload.get("modelSelection")
+    if isinstance(selection, dict):
+        if selection.get("status") == "unavailable":
+            return "agbrowse reported modelSelection.status == 'unavailable'"
+        if selection.get("verified") is False:
+            return "agbrowse reported modelSelection.verified == false"
+        normalized = selection.get("normalizedModel") or selection.get("selected")
+        if isinstance(normalized, str) and normalized and normalized != requested_model:
+            return f"agbrowse selected '{normalized}' instead of '{requested_model}'"
+
+    return None
 LOCK_STATUS_INTERVAL_SECONDS = 30
 MISROUTED_EXIT_CODE = 3
 RUN_ID_PREFIX = "CONSULT_RUN_ID: "
@@ -879,6 +932,35 @@ def main(argv: Sequence[str]) -> int:
                     )
                     print(f"agbrowse send failed; see {send_json_path} and {args.stderr_output}", file=sys.stderr)
                     return send_proc.returncode or 1
+
+                # Selection fails closed: an unverified model tier invalidates the
+                # consult even though the prompt already went out, so stop here
+                # rather than presenting a lesser model's answer as the requested one.
+                model_problem = detect_model_not_enforced(send_payload, selected_model)
+                if model_problem:
+                    owned_session_id = submitted_session_id
+                    if not args.no_save_session:
+                        write_session_file(session_path, send_payload, response_path)
+                    record_history(
+                        "model-not-enforced",
+                        "model-not-enforced",
+                        sessionId=submitted_session_id,
+                        conversationUrl=submitted_url,
+                        requestedModel=selected_model,
+                        error=model_problem,
+                    )
+                    print(
+                        "consult aborted: requested model "
+                        f"'{selected_model}' was not applied by agbrowse.\n"
+                        f"  reason: {model_problem}\n"
+                        "  The prompt WAS submitted, but on an unverified model, so the\n"
+                        "  answer would not be the requested tier. Not polling for it.\n"
+                        f"  Evidence: {send_json_path}\n"
+                        "  Recovery: select the model manually in the browser, or resume\n"
+                        f"  this session id after fixing selection: {submitted_session_id}",
+                        file=sys.stderr,
+                    )
+                    return MODEL_UNENFORCED_EXIT_CODE
 
                 owned_session_id = submitted_session_id
 
