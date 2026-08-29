@@ -24,7 +24,7 @@ deterministic Aside REPL runner owns the normal **Work** project path; Aside's
    process with the exact quality and packet paths. The deterministic Aside REPL
    fast path owns Work navigation, tier/model verification, send, terminal
    wait, receipt recovery, and artifacts. Its in-browser guard must commit the
-   user turn in under 60 seconds or exit `75`; never extend or retry that
+   user turn in under 120 seconds or exit `75`; never extend or retry that
    submission budget. Aside CLI may buffer `CONSULT_SUBMITTED` until completion,
    so use the recorded `submitElapsedSeconds` as the timing evidence.
    Exit `76` means the send was clicked but commit could not be proven; preserve

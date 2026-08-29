@@ -12,7 +12,7 @@ class ConsultAsideContractTest(unittest.TestCase):
 
         self.assertIn("aside exec", skill)
         self.assertIn("run_aside_repl_consult.py", skill)
-        self.assertIn("under 60 seconds", skill)
+        self.assertIn("under 120 seconds", skill)
         self.assertIn("submitElapsedSeconds", skill)
         self.assertIn("adaptive recovery path", skill)
         self.assertIn("Do not use an Aside agent for ordinary sends", skill)

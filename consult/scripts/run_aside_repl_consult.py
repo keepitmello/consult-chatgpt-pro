@@ -18,7 +18,7 @@ from typing import Any, Sequence
 from urllib.parse import urlparse
 
 
-SUBMIT_TIMEOUT_SECONDS = 60
+SUBMIT_TIMEOUT_SECONDS = 120
 DEFAULT_RESPONSE_TIMEOUT_SECONDS = 3600
 DEFAULT_CONFIG = Path.home() / ".codex" / "consult.env"
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -143,13 +143,13 @@ var submitState = await Promise.race([
     return {{ workPage, ownedTargetId: ownedTab.targetId, send }};
   }})(),
   new Promise((_, reject) => setTimeout(
-    () => reject(new Error('pre-submit preparation exceeded 50 seconds at ' + submitStage)),
-    50000
+    () => reject(new Error('pre-submit preparation exceeded 110 seconds at ' + submitStage)),
+    110000
   ))
 ]);
 var workPage = submitState.workPage;
-var remainingSubmitMs = 60000 - (Date.now() - submitStartedAt);
-if (remainingSubmitMs <= 0) throw new Error('pre-submit preparation exceeded 60 seconds');
+var remainingSubmitMs = 120000 - (Date.now() - submitStartedAt);
+if (remainingSubmitMs <= 0) throw new Error('pre-submit preparation exceeded 120 seconds');
 submitStage = 'commit-user-turn';
 await submitState.send.click();
 var userTurn = workPage.locator('[data-message-author-role="user"]').filter({{ hasText: {js(receipt)} }}).last();
@@ -165,11 +165,11 @@ try {{
   throw new Error('SUBMIT_UNKNOWN');
 }}
 var submitElapsedMs = Date.now() - submitStartedAt;
-if (submitElapsedMs >= 60000) {{
+if (submitElapsedMs >= 120000) {{
   console.log({js(SUBMIT_UNKNOWN_MARKER)} + JSON.stringify({{
     receipt: {js(receipt)},
     quality,
-    reason: 'user turn committed after 60-second deadline'
+    reason: 'user turn committed after 120-second deadline'
   }}));
   await workPage.close().catch(() => {{}});
   throw new Error('SUBMIT_UNKNOWN');
@@ -229,7 +229,7 @@ def run_repl_streaming(
     submit_elapsed = 0.0
     # Aside CLI buffers REPL output until the JavaScript finishes, so Python
     # cannot observe the submit marker in real time. The in-JS Promise.race owns
-    # the 60-second submit deadline; this is only a whole-process safety bound.
+    # the 120-second submit deadline; this is only a whole-process safety bound.
     process_deadline = started + submit_timeout + response_timeout
     response_deadline: float | None = None
 

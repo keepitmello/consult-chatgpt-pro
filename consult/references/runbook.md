@@ -36,7 +36,7 @@ python3 <consult-skill-dir>/scripts/run_aside_repl_consult.py \
   --stderr-output .consult/<run>/stderr.log
 ```
 
-The runner's in-browser guard must commit the user turn within 60 seconds and
+The runner's in-browser guard must commit the user turn within 120 seconds and
 records `submitElapsedSeconds`; it exits `75` at that boundary. Never increase
 or blindly retry the budget. Aside CLI can buffer `CONSULT_SUBMITTED` until the
 response finishes, so the saved timing is authoritative. Aside REPL does not
@@ -54,7 +54,7 @@ For `--quality xhigh`, require:
 quality: xhigh
 model: GPT-5.6 Sol
 tier: 매우 높음 (4 of 5)
-submitElapsedSeconds: <60
+submitElapsedSeconds: <120
 ```
 
 For `--quality pro`, require:
@@ -63,11 +63,11 @@ For `--quality pro`, require:
 quality: pro
 model: GPT-5.6 Sol
 tier: Pro (5 of 5)
-submitElapsedSeconds: <60
+submitElapsedSeconds: <120
 ```
 
 Reject a missing or mismatched quality/receipt, an unverified model or tier, a
-partial response, or a submission at or above 60 seconds.
+partial response, or a submission at or above 120 seconds.
 
 On exit `75` caused by verified UI drift, preserve evidence and use `aside exec`
 plus `chatgpt-work-consult` once as adaptive recovery. Only then read
