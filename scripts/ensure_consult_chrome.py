@@ -130,7 +130,7 @@ def launch_owner(profile: Path, log_path: Path) -> None:
                 "--no-default-browser-check",
                 "--disable-background-networking",
                 "--disable-features=MacAppCodeSignClone,OptimizationGuideOnDeviceModel,OptimizationGuideModelDownloading",
-                "--no-startup-window",
+                "about:blank",
             ],
             stdin=subprocess.DEVNULL,
             stdout=log_handle,

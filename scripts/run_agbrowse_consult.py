@@ -48,6 +48,7 @@ DEFAULT_CONFIG = Path.home() / ".codex" / "consult.env"
 DEFAULT_SESSION_FILE = ".consult/agbrowse-consult-session.json"
 DEFAULT_TURNS_FILE = ".consult/agbrowse-consult-turns.jsonl"
 QUALITY_PRESETS: dict[str, tuple[str, str | None]] = {
+    "medium": ("thinking", "medium"),
     "high": ("thinking", "high"),
     "xhigh": ("thinking", "xhigh"),
     "pro": ("pro", None),
@@ -604,7 +605,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "--quality",
         choices=tuple(QUALITY_PRESETS),
         default="pro",
-        help="GPT-5.6 consult tier: pro (default), high, or xhigh.",
+        help="GPT-5.6 consult tier: pro (default), xhigh, high, or medium.",
     )
     parser.add_argument("--model", default=None, help="Explicit model override; normally use --quality.")
     parser.add_argument("--effort", default=None, help="Explicit effort override; requires --model.")
@@ -629,8 +630,8 @@ def main(argv: Sequence[str]) -> int:
         print("--effort requires --model; normally choose --quality high|xhigh|pro", file=sys.stderr)
         return 2
     if args.model:
-        if args.model in PINNED_THINKING_MODELS and args.effort not in {"high", "xhigh"}:
-            print("GPT-5.6 Thinking requires --effort high or xhigh", file=sys.stderr)
+        if args.model in PINNED_THINKING_MODELS and args.effort not in {"medium", "high", "xhigh"}:
+            print("GPT-5.6 Thinking requires --effort medium, high, or xhigh", file=sys.stderr)
             return 2
         if args.model in PINNED_PRO_MODELS and args.effort:
             print("GPT-5.6 Pro is selected without --effort", file=sys.stderr)

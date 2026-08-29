@@ -34,12 +34,12 @@ class ConsultRuntimeTest(unittest.TestCase):
         self.assertEqual(launcher.name, "ensure_consult_chrome.py")
         self.assertEqual(launcher.parent, SCRIPT.parent)
 
-    def test_launcher_does_not_create_a_bootstrap_blank_tab(self) -> None:
+    def test_launcher_creates_a_bootstrap_tab_for_normal_app_termination(self) -> None:
         launcher_source = MODULE.chrome_launcher({}).read_text(encoding="utf-8")
 
-        self.assertIn('"--no-startup-window"', launcher_source)
+        self.assertIn('                "about:blank",', launcher_source)
         self.assertIn('"--disable-features=MacAppCodeSignClone', launcher_source)
-        self.assertNotIn('                "about:blank",', launcher_source)
+        self.assertNotIn('"--no-startup-window"', launcher_source)
 
 
 if __name__ == "__main__":

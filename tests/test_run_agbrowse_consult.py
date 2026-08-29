@@ -274,6 +274,31 @@ const powerRoot = `const CHATGPT_POWER_PICKER_ROOT_SELECTOR =
     '[role="menu"][data-state="open"]:has([role="menuitem"][aria-label="Power"])';`;
 const preflight = `async function assertChatSurfaceForModelMutation(page) {
     const { detectChatGptComposerSurface } = await import('./product-surfaces.mjs');`;
+const simplifiedPickerOpen = `    const visible = await menu.isVisible().catch(() => false);
+    if (!visible) return false;
+    if (!model && !effort && await isChatGptPowerPickerOpen(page)) return true;`;
+const sliderState = `async function readChatGptPowerSliderState(page) {`;
+const sliderDriver = `async function selectChatGptPowerTierBySlider(page, choice, options = {}) {
+    if (!(await isChatGptPowerPickerOpen(page))) return false;
+    const effort = options.effort || null;
+    const usedFallbacks = options.usedFallbacks || [];
+    const targetIndex = powerTierIndexForChoice(choice, effort);
+    const power = page.locator('[role="menuitem"][aria-label="Power"]').first();
+    if (!(await power.isVisible().catch(() => false))) return false;
+    await power.focus({ timeout: 1_000 }).catch(() => undefined);
+    await power.click({ timeout: 2_000 }).catch(() => undefined);`;
+const sliderCalls = `if (await isChatGptPowerPickerOpen(page)
+                    && await selectChatGptPowerTierBySlider`;
+const currentModelOption = `    // Current path: exact labels in composer-scoped menu root.`;
+const checkedModelSlider = `    const powerPickerOpen = await isChatGptPowerPickerOpen(page);
+    if (powerPickerOpen) {
+        const sliderState = await readChatGptPowerSliderState(page);`;
+const observedEffortSlider = `    if (requestedEffort && targetModel === 'thinking' && await isChatGptPowerPickerOpen(page)) {`;
+const simpleSliderFallback = `            if (!sliderApplied) {
+                try {`;
+const simplifiedEffortEvidence = `        const simplifiedSelected = currentEvidence?.label
+            ? effortChoiceFromSimplifiedText(currentEvidence.label, /** @type {string} */ (targetModel), requestedEffort)
+            : null;`;
 // The Power-shell submenu probe lines must be present in the stub, otherwise the
 // locale-widening replacements below have nothing to match and the Korean
 // assertions fail unconditionally rather than testing anything.
@@ -287,7 +312,7 @@ const powerLocators = "    const a = root.locator('[role=\"menuitem\"][aria-labe
 const result = await load(
     'file:///tmp/agbrowse/web-ai/chatgpt-model.mjs',
     {},
-    async () => ({ format: 'module', source: `${powerRoot}\n${preflight}\n${marker}\n${submenuProbe}\n${powerLocators}` }),
+    async () => ({ format: 'module', source: `${powerRoot}\n${preflight}\n${simplifiedPickerOpen}\n${sliderState}\n${sliderDriver}\n${sliderCalls}\n${sliderCalls}\n${currentModelOption}\n${checkedModelSlider}\n${observedEffortSlider}\n${simpleSliderFallback}\n${simplifiedEffortEvidence}\n${marker}\n${submenuProbe}\n${powerLocators}` }),
 );
 process.stdout.write(String(result.source));
 '''
@@ -318,6 +343,69 @@ process.stdout.write(String(result.source));
         # root. The stub omits it, so this guards the loader's own output only.
         self.assertNotIn("composer-intelligence-picker-content", result.stdout)
         self.assertIn("modal-conversation-history-rate-limit", result.stdout)
+        # The localized simple picker keeps its model radios in a hidden
+        # advanced panel. Open detection must use the visible slider rather
+        # than scanning only those hidden rows, or every retry closes the menu.
+        self.assertIn(
+            "const effortSlider = simpleView.locator(",
+            result.stdout,
+        )
+        self.assertIn(
+            "'[data-model-reasoning-effort-slider]'",
+            result.stdout,
+        )
+        self.assertNotIn(
+            "    const visible = await menu.isVisible().catch(() => false);\n"
+            "    if (!visible) return false;\n"
+            "    if (!model && !effort && await isChatGptPowerPickerOpen(page)) return true;",
+            result.stdout,
+        )
+        self.assertIn("async function isChatGptTierSliderOpen(page)", result.stdout)
+        self.assertIn(
+            "if (!(await isChatGptTierSliderOpen(page))) return false;",
+            result.stdout,
+        )
+        self.assertIn(
+            '[role="menuitem"]:has([data-model-reasoning-effort-slider])',
+            result.stdout,
+        )
+        self.assertEqual(
+            result.stdout.count(
+                "if (await isChatGptTierSliderOpen(page)\n"
+                "                    && await selectChatGptPowerTierBySlider"
+            ),
+            2,
+        )
+        self.assertIn(
+            "if (await isChatGptTierSliderOpen(page)) return null;",
+            result.stdout,
+        )
+        self.assertIn(
+            "const tierSliderOpen = await isChatGptTierSliderOpen(page);",
+            result.stdout,
+        )
+        self.assertIn(
+            "requestedEffort && targetModel === 'thinking' "
+            "&& await isChatGptTierSliderOpen(page)",
+            result.stdout,
+        )
+        self.assertIn("element.ownerDocument.activeElement", result.stdout)
+        self.assertIn(
+            "if (!sliderApplied && await isChatGptTierSliderOpen(page))",
+            result.stdout,
+        )
+        self.assertIn(
+            "reasoning-effort-slider-unverified",
+            result.stdout,
+        )
+        self.assertIn(
+            "const simplifiedSelected = !tierSliderOpen && currentEvidence?.label",
+            result.stdout,
+        )
+        self.assertNotIn(
+            "if (!(await isChatGptPowerPickerOpen(page))) return false;",
+            result.stdout,
+        )
         # The live Korean Power shell labels the effort submenu trigger '추론 수준'.
         # '추론 강도' never appeared in the DOM and silently disabled effort
         # enforcement, so the current label is what must be pinned here.

@@ -7,7 +7,7 @@ Runtime contract:
 - one headed Google Chrome instance
 - one profile at `~/.codex/browser-profiles/consult-agbrowse/browser-profile`
 - one local CDP endpoint at `127.0.0.1:9222`
-- no bootstrap `about:blank` tab when the owner starts
+- one bootstrap `about:blank` tab so macOS app termination can close the owner
 - `agbrowse` auto-start disabled
 - independent initial consults in separate tabs through `--parallel`
 - saved `sessionId` reuse for follow-ups
