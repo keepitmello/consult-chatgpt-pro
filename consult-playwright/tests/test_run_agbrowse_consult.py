@@ -156,6 +156,7 @@ class ConsultHelperTest(unittest.TestCase):
             "PATH": f"{self.bin_dir}{os.pathsep}{env.get('PATH', '')}",
             "CONSULT_BROWSER_AGENT_HOME": str(self.browser_home),
             "CONSULT_CHROME_LAUNCHER": str(self.launcher),
+            "CONSULT_CHATGPT_URL": "https://chatgpt.com/g/g-p-test-work/project",
         })
         env.update(overrides)
         return env
@@ -226,6 +227,18 @@ class ConsultHelperTest(unittest.TestCase):
         invocation = json.loads(argv_log.read_text(encoding="utf-8"))
         self.assertIn("--parallel", invocation)
         self.assertNotIn("--new-tab", invocation)
+
+    def test_global_chat_url_is_rejected_before_provider_launch(self) -> None:
+        packet = self.root / "global-chat.md"
+        packet.write_text("This must stay inside Work.", encoding="utf-8")
+        command = self.command(packet=packet, prompt_file=None, stem="global-chat")
+        command.extend(["--url", "https://chatgpt.com/"])
+
+        result = self.run_helper(command)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("requires a verified ChatGPT Work project URL", result.stderr)
+        self.assertFalse((self.root / "global-chat-response.send.json").exists())
 
     def test_success_records_topic_submit_receipt_and_completion_in_shared_history(self) -> None:
         packet = self.root / "history.md"

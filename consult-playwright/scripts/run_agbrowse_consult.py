@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 from typing import Any, Sequence
+from urllib.parse import urlparse
 
 from consult_prompt_contract import (
     add_initial_prompt_contract,
@@ -120,6 +121,19 @@ FOLLOW_UP_UPLOAD_PREAMBLE = (
     "첨부한 후속 컨텍스트 패킷을 이 대화의 연속으로 검토하고, 그 안의 질문에 답해 주세요.\n\n"
     "판단에 필요한 근거가 패킷과 앞선 대화에 부족하면 그 점을 명확히 밝혀 주세요."
 )
+
+
+def is_work_project_url(value: str | None) -> bool:
+    if not value:
+        return False
+    parsed = urlparse(value)
+    return (
+        parsed.scheme == "https"
+        and parsed.netloc == "chatgpt.com"
+        and parsed.path.startswith("/g/g-p-")
+        and "-work/" in parsed.path
+        and (parsed.path.endswith("/project") or "/c/" in parsed.path)
+    )
 
 
 def read_text(path: Path) -> str:
@@ -746,7 +760,14 @@ def main(argv: Sequence[str]) -> int:
     prompt_hash = expected_prompt_hash(guarded_prompt, attachment_policy)
 
     config_url = read_config_value(Path(args.config).expanduser(), "CONSULT_CHATGPT_URL")
-    chatgpt_url = args.url or os.environ.get("CONSULT_CHATGPT_URL") or config_url or "https://chatgpt.com/"
+    chatgpt_url = args.url or os.environ.get("CONSULT_CHATGPT_URL") or config_url
+    if not is_work_project_url(chatgpt_url):
+        print(
+            "consult Playwright fallback requires a verified ChatGPT Work project URL; "
+            "set CONSULT_CHATGPT_URL or pass --url",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         env = enable_raw_prompt_transport(browser_env(os.environ))

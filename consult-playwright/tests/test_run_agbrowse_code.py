@@ -74,6 +74,7 @@ class ConsultCodeChromeRouteTest(unittest.TestCase):
             "CONSULT_CHROME_LAUNCHER": str(self.launcher),
             "CDP_PORT": "9223",
             "AGBROWSE_WEB_AI_AUTO_START": "1",
+            "CONSULT_CHATGPT_URL": "https://chatgpt.com/g/g-p-test-work/project",
         })
         previous = os.environ.copy()
         os.environ.clear()
@@ -98,6 +99,19 @@ class ConsultCodeChromeRouteTest(unittest.TestCase):
         self.assertEqual(invocation["cdpPort"], "9222")
         self.assertEqual(invocation["autoStart"], "0")
         self.assertIn("--parallel", invocation["argv"])
+
+    def test_work_url_validator_rejects_global_chat(self) -> None:
+        spec = importlib.util.spec_from_file_location("run_agbrowse_code_url_test", HELPER)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        self.assertTrue(
+            module.is_work_project_url("https://chatgpt.com/g/g-p-test-work/project")
+        )
+        self.assertFalse(module.is_work_project_url("https://chatgpt.com/"))
+        self.assertFalse(module.is_work_project_url("https://chatgpt.com/c/global"))
 
 
 if __name__ == "__main__":

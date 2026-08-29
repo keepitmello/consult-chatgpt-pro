@@ -1,10 +1,14 @@
 ---
-name: consult
-description: "로컬 ChatGPT에서 GPT-5.6 Pro 상담. 답은 증거로만 쓰고 로컬에서 검증."
+name: consult-playwright
+description: "Aside 주경로가 실패했을 때만 쓰는 ChatGPT Work Playwright/agbrowse 폴백. 평소에는 읽지 않는다."
 
 ---
 
-# Consult
+# Consult Playwright Fallback
+
+Load this skill only after the main Consult Aside path fails, or when the user
+explicitly requests the Playwright fallback. This skill is not installed in an
+ordinary Agent Skills root and must not compete with `consult`.
 
 Send one self-contained packet to the ChatGPT web UI through `agbrowse web-ai`, bring GPT-5.6 Pro's answer back as evidence, and act on it only after local verification.
 

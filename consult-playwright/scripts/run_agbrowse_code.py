@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 from typing import Any, Sequence
+from urllib.parse import urlparse
 from zipfile import BadZipFile, ZipFile
 
 from consult_runtime import browser_env, chrome_launcher, close_session_tab, stop_chrome_if_idle
@@ -30,6 +31,19 @@ QUALITY_PRESETS: dict[str, tuple[str, str | None]] = {
     "xhigh": ("thinking", "xhigh"),
     "pro": ("pro", None),
 }
+
+
+def is_work_project_url(value: str | None) -> bool:
+    if not value:
+        return False
+    parsed = urlparse(value)
+    return (
+        parsed.scheme == "https"
+        and parsed.netloc == "chatgpt.com"
+        and parsed.path.startswith("/g/g-p-")
+        and "-work/" in parsed.path
+        and (parsed.path.endswith("/project") or "/c/" in parsed.path)
+    )
 
 
 def read_text(path: Path) -> str:
@@ -162,7 +176,14 @@ def main(argv: Sequence[str]) -> int:
     stderr_path = Path(args.stderr_output).expanduser()
     session_path = Path(args.session_file).expanduser()
     config_url = read_config_value(Path(args.config).expanduser(), "CONSULT_CHATGPT_URL")
-    chatgpt_url = args.url or os.environ.get("CONSULT_CHATGPT_URL") or config_url or "https://chatgpt.com/"
+    chatgpt_url = args.url or os.environ.get("CONSULT_CHATGPT_URL") or config_url
+    if not is_work_project_url(chatgpt_url):
+        print(
+            "consult Playwright fallback requires a verified ChatGPT Work project URL; "
+            "set CONSULT_CHATGPT_URL or pass --url",
+            file=sys.stderr,
+        )
+        return 2
 
     if args.extract_only:
         cmd = ["agbrowse", "web-ai", "code-extract", "--vendor", "chatgpt", "--json"]

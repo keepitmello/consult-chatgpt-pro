@@ -1,6 +1,8 @@
 # Installation Notes
 
-This skill follows the open Agent Skills layout: a directory containing `SKILL.md` plus optional `scripts/`, `references/`, and `agents/` resources.
+This is the explicit Playwright fallback. The normal `consult` skill does not
+install or load it. Invoke it from the canonical repository only after the Aside
+path fails or when strict agbrowse/code-artifact recovery is required.
 
 ## Codex
 
@@ -8,14 +10,14 @@ Install as a personal skill:
 
 ```bash
 mkdir -p ~/.agents/skills
-cp -R consult ~/.agents/skills/consult
+cp -R consult-playwright ~/.agents/skills/consult-playwright
 ```
 
 Or install as a project skill:
 
 ```bash
 mkdir -p .agents/skills
-cp -R consult .agents/skills/consult
+cp -R consult-playwright .agents/skills/consult-playwright
 ```
 
 Install `agbrowse` before using the web execution path:
@@ -46,7 +48,7 @@ Consult packets are sent by file upload by default. The helper saves the latest 
 Invoke explicitly:
 
 ```text
-$consult use ChatGPT web through agbrowse for a focused second opinion and save the verified response under .consult/
+$consult-playwright recover the failed Aside consult through agbrowse and save the verified response under .consult/
 ```
 
 ## Claude Code
@@ -55,14 +57,14 @@ Install as a personal skill:
 
 ```bash
 mkdir -p ~/.claude/skills
-cp -R consult ~/.claude/skills/consult
+cp -R consult-playwright ~/.claude/skills/consult-playwright
 ```
 
 Or install as a project skill:
 
 ```bash
 mkdir -p .claude/skills
-cp -R consult .claude/skills/consult
+cp -R consult-playwright .claude/skills/consult-playwright
 ```
 
 Claude Code environments without `agbrowse`, Google Chrome, and access to the packaged local headed Chrome owner can still write packet and prompt files, but they cannot complete the required automatic web submission and response capture. Do not fall back to private endpoints, token extraction, hosted browsers, stealth, or API calls.

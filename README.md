@@ -1,43 +1,50 @@
 # consult-chatgpt-pro
 
-A self-contained Agent Skill for consulting ChatGPT GPT-5.6 Pro through the visible web UI with `agbrowse`.
+A two-axis Consult package for obtaining a verified ChatGPT Work-project second
+opinion through Aside.
 
-It packages the prompt contract, one-browser/multi-tab runtime, file-based packet transport, submit receipts, response correlation, follow-up history and recovery, code-artifact workflow, tests, and operating references. It does not bundle Chrome, Python, Node.js, or `agbrowse`.
+- `consult/` is the normal Agent Skill. It owns packet quality, receipts, saved
+  evidence, and local verification.
+- `consult/aside-skill/chatgpt-work-consult/` teaches Aside's own agent the
+  stable Work-project browser workflow.
+- `consult-playwright/` is the uninstalled agbrowse fallback. The main package
+  carries only a hidden relative link to it for explicit failure recovery.
 
 ## Requirements
 
-- macOS with Google Chrome
-- Python 3
-- Node.js
-- `agbrowse` 0.1.18 or a compatibility-verified newer release
-- A ChatGPT account already signed in through the managed visible Chrome profile
+- Aside Browser CLI
+- A ChatGPT account signed in inside Aside Browser
+- Access to the ChatGPT project named `Work`
+- Python, Node.js, Chrome, and `agbrowse` only for the fallback
 
 ## Install
 
-Clone the repository and link or copy it into an Agent Skills root:
+Clone the repository and link only the main skill:
 
 ```bash
 git clone https://github.com/keepitmello/consult-chatgpt-pro.git
-ln -s "$(pwd)/consult-chatgpt-pro" ~/.codex/skills/consult
+ln -s "$(pwd)/consult-chatgpt-pro/consult" ~/.agents/skills/consult
+bash "$(pwd)/consult-chatgpt-pro/consult/scripts/install-aside-skill.sh"
 ```
 
-Use a different target root such as `~/.claude/skills/consult` when appropriate. Keep one canonical checkout and link other active skill roots to it.
+Do not link `consult-playwright/` into a normal skill root. The main skill reads
+its hidden fallback link only after the Aside path fails.
 
 ## Verify
 
-Run from the repository root:
+Verify both axes:
 
 ```bash
-python3 scripts/check_consult_runtime.py
-python3 scripts/ensure_consult_chrome.py --ensure
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -q
+node ~/.aside/u/0/skills/builtin/skill-creator/scripts/validate-frontmatter.mjs \
+  consult/aside-skill/chatgpt-work-consult/SKILL.md
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s consult-playwright/tests -q
 ```
 
 ## Usage
 
-Read `SKILL.md` before using the workflow. The normal runner uploads `--packet` and `--follow-up-file` inputs as attachments; packet bodies are never pasted into the ChatGPT composer. A short literal `--follow-up "..."` may stay inline.
-
-Detailed commands, parallel execution, recent-topic lookup, follow-up, and recovery are documented in `references/runbook.md`.
+Read `consult/SKILL.md`. Normal advice consults delegate to Aside and run only
+inside Work. The fallback retains the old strict picker, session, attachment,
+and code-artifact machinery.
 
 ## Security boundary
 
