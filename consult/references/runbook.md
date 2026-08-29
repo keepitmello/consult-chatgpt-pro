@@ -5,6 +5,7 @@
 - `aside --version` succeeds.
 - `~/.aside/u/0/skills/user/chatgpt-work-consult/SKILL.md` exists and validates.
 - `CONSULT_CHATGPT_URL` resolves to the ChatGPT project named `Work`.
+- The invocation contains exactly one `--quality xhigh` or `--quality pro`.
 - The packet is self-contained and safe to disclose to Aside and ChatGPT.
 
 If the Aside account skill is missing, run:
@@ -13,7 +14,7 @@ If the Aside account skill is missing, run:
 bash <consult-skill-dir>/scripts/install-aside-skill.sh
 ```
 
-Fail before `aside exec` unless the URL matches:
+Fail before the REPL runner unless the URL matches:
 
 ```text
 https://chatgpt.com/g/g-p-...-work/project
@@ -22,54 +23,52 @@ https://chatgpt.com/g/g-p-...-work/project
 Global `/`, global `/c/...`, temporary chat, a non-HTTPS URL, or another host is
 not a recoverable default.
 
-## Build the Aside brief
+## Launch the fast path
 
-Generate a random receipt and write one run-specific task file. Include the
-packet body verbatim rather than asking Aside to discover a local file.
-
-```text
-Read your account skill `chatgpt-work-consult` before any browser action.
-
-Work project URL: <CONSULT_CHATGPT_URL>
-Receipt: <random receipt>
-
-Execute that skill with the exact packet below.
-
-PACKET_BEGIN
-<exact packet>
-PACKET_END
-```
-
-The delimiters belong to the Aside transport brief. The ChatGPT composer must
-receive only `<exact packet>`.
-
-Launch it in a persistent PTY:
+Launch the deterministic Aside REPL runner as a background process:
 
 ```bash
-aside exec --effort high "$(<.consult/<run>/aside-task.txt)"
+python3 <consult-skill-dir>/scripts/run_aside_repl_consult.py \
+  --quality <xhigh-or-pro> \
+  --packet .consult/<run>/packet.md \
+  --response-output .consult/<run>/response.md \
+  --json-output .consult/<run>/result.json \
+  --stderr-output .consult/<run>/stderr.log
 ```
 
-The harness background process completion is the normal terminal signal. Follow
-the Aside skill's progress-reporting rule; do not poll snapshots in a tight loop.
+The runner's in-browser guard must commit the user turn within 60 seconds and
+records `submitElapsedSeconds`; it exits `75` at that boundary. Never increase
+or blindly retry the budget. Aside CLI can buffer `CONSULT_SUBMITTED` until the
+response finishes, so the saved timing is authoritative. Aside REPL does not
+create a normal Aside GUI conversation entry.
+
+Exit `76` is `SUBMIT_UNKNOWN`: the click occurred but the user turn was not
+commit-verified before the deadline. Preserve its evidence and never retry,
+invoke the Aside agent, or enter the Playwright fallback.
 
 ## Accept or reject
 
-Accept only:
+For `--quality xhigh`, require:
 
 ```text
-ASIDE_WORK_CONSULT_RESULT
-RECEIPT: <exact receipt>
-SURFACE: Work
-MODEL: GPT-5.6 Sol
-TIER: 매우 높음 (4 of 5)
-RESPONSE_BEGIN
-<exact response containing the receipt>
-RESPONSE_END
+quality: xhigh
+model: GPT-5.6 Sol
+tier: 매우 높음 (4 of 5)
+submitElapsedSeconds: <60
 ```
 
-Reject a missing/mismatched receipt, any other surface, an unverified model or
-tier, a partial response, or an `ASIDE_WORK_CONSULT_ERROR`.
+For `--quality pro`, require:
 
-On rejection, preserve the Aside output. Read
-`fallback/consult-playwright/SKILL.md` only when a Playwright fallback is
-actually needed.
+```text
+quality: pro
+model: GPT-5.6 Sol
+tier: Pro (5 of 5)
+submitElapsedSeconds: <60
+```
+
+Reject a missing or mismatched quality/receipt, an unverified model or tier, a
+partial response, or a submission at or above 60 seconds.
+
+On exit `75` caused by verified UI drift, preserve evidence and use `aside exec`
+plus `chatgpt-work-consult` once as adaptive recovery. Only then read
+`fallback/consult-playwright/SKILL.md`.

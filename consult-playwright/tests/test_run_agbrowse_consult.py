@@ -165,6 +165,7 @@ class ConsultHelperTest(unittest.TestCase):
         command = [
             sys.executable,
             str(HELPER),
+            "--quality", "xhigh",
             "--upload-instructions", str(self.upload_instructions),
             "--response-output", str(self.root / f"{stem}-response.md"),
             "--json-output", str(self.root / f"{stem}-response.json"),
@@ -239,6 +240,19 @@ class ConsultHelperTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("requires a verified ChatGPT Work project URL", result.stderr)
         self.assertFalse((self.root / "global-chat-response.send.json").exists())
+
+    def test_missing_quality_is_rejected_before_provider_launch(self) -> None:
+        packet = self.root / "missing-quality.md"
+        packet.write_text("Quality must be explicit.", encoding="utf-8")
+        command = self.command(packet=packet, prompt_file=None, stem="missing-quality")
+        quality_index = command.index("--quality")
+        del command[quality_index:quality_index + 2]
+
+        result = self.run_helper(command)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--quality is required", result.stderr)
+        self.assertFalse((self.root / "missing-quality-response.send.json").exists())
 
     def test_success_records_topic_submit_receipt_and_completion_in_shared_history(self) -> None:
         packet = self.root / "history.md"

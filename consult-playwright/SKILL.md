@@ -28,7 +28,10 @@ Consult carries two kinds of load, not just questions. An **advice consult** buy
 
 ## Quality tiers
 
-Match the tier to the weight of the question, not to a default. `pro` (GPT-5.6 Pro) is for the questions that deserve the strongest single read — a decision that is expensive to get wrong, a design that will be built on, a domain being entered for the first time. `xhigh` (GPT-5.6 Thinking / Extra High) is the right call for ordinary questions: a product comparison, a how-does-this-work, a bounded recommendation. `high` for routine second reads, and faster settings only for an explicit smoke test.
+There is no default tier. The caller must explicitly pass `--quality pro` or
+`--quality xhigh`; without one, stop before browser launch. `pro` (GPT-5.6 Pro)
+is for questions that deserve the strongest single read. `xhigh` (GPT-5.6
+Thinking / Extra High) is for ordinary bounded consults.
 
 Cost is not the axis that decides this — usage is effectively free, and a background submit hides latency. What actually gets spent on `pro` is the asker's wait: Pro thinks for many minutes and can run to an hour, so pointing it at an everyday question buys nothing and delays the answer. Reach for `pro` when the question is genuinely heavy, and let ordinary ones ride `xhigh`.
 

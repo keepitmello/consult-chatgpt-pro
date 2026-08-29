@@ -27,7 +27,6 @@ DEFAULT_STDERR_OUTPUT = ".consult/agbrowse-code-stderr.log"
 DEFAULT_SESSION_FILE = ".consult/agbrowse-code-session.json"
 DEFAULT_TRACE_DIR = ".consult/agbrowse-code-trace"
 QUALITY_PRESETS: dict[str, tuple[str, str | None]] = {
-    "high": ("thinking", "high"),
     "xhigh": ("thinking", "xhigh"),
     "pro": ("pro", None),
 }
@@ -156,7 +155,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--conversation", default=None, help="Continue a ChatGPT conversation id or URL.")
     parser.add_argument("--session", default=None, help="Continue an agbrowse web-ai session.")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
-    parser.add_argument("--quality", choices=tuple(QUALITY_PRESETS), default="pro", help="GPT-5.6 code tier: pro (default), high, or xhigh.")
+    parser.add_argument("--quality", choices=tuple(QUALITY_PRESETS), default=None, help="Required GPT-5.6 code tier: xhigh or pro.")
     parser.add_argument("--timeout", type=int, default=3600)
     parser.add_argument("--context-refresh", action="store_true")
     parser.add_argument("--extract-only", action="store_true", help="Recover zip artifacts from an existing conversation without sending a new prompt.")
@@ -165,6 +164,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 def main(argv: Sequence[str]) -> int:
     args = parse_args(argv)
+    if args.quality is None:
+        print("--quality is required; choose exactly xhigh or pro", file=sys.stderr)
+        return 2
     selected_model, selected_effort = QUALITY_PRESETS[args.quality]
     if not shutil.which("agbrowse"):
         print("agbrowse not found. Install with: npm install -g agbrowse", file=sys.stderr)

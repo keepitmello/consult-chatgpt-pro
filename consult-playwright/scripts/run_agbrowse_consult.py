@@ -49,13 +49,9 @@ DEFAULT_CONFIG = Path.home() / ".codex" / "consult.env"
 DEFAULT_SESSION_FILE = ".consult/agbrowse-consult-session.json"
 DEFAULT_TURNS_FILE = ".consult/agbrowse-consult-turns.jsonl"
 QUALITY_PRESETS: dict[str, tuple[str, str | None]] = {
-    "medium": ("thinking", "medium"),
-    "high": ("thinking", "high"),
     "xhigh": ("thinking", "xhigh"),
     "pro": ("pro", None),
 }
-PINNED_THINKING_MODELS = {"thinking"}
-PINNED_PRO_MODELS = {"pro"}
 # agbrowse reports an unenforced model tier as a *warning* on an otherwise
 # successful `status: "sent"` payload, so a consult can silently run on whatever
 # model the tab happened to be showing. These are the phrases it uses when the
@@ -618,11 +614,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--quality",
         choices=tuple(QUALITY_PRESETS),
-        default="pro",
-        help="GPT-5.6 consult tier: pro (default), xhigh, high, or medium.",
+        default=None,
+        help="Required GPT-5.6 consult tier: xhigh or pro.",
     )
-    parser.add_argument("--model", default=None, help="Explicit model override; normally use --quality.")
-    parser.add_argument("--effort", default=None, help="Explicit effort override; requires --model.")
     parser.add_argument("--timeout", type=int, default=3600)
     parser.add_argument(
         "--lock-timeout",
@@ -640,25 +634,11 @@ def main(argv: Sequence[str]) -> int:
     if args.lock_timeout < 0:
         print("--lock-timeout must be zero or greater", file=sys.stderr)
         return 2
-    if args.effort and not args.model:
-        print("--effort requires --model; normally choose --quality high|xhigh|pro", file=sys.stderr)
+    if args.quality is None:
+        print("--quality is required; choose exactly xhigh or pro", file=sys.stderr)
         return 2
-    if args.model:
-        if args.model in PINNED_THINKING_MODELS and args.effort not in {"medium", "high", "xhigh"}:
-            print("GPT-5.6 Thinking requires --effort medium, high, or xhigh", file=sys.stderr)
-            return 2
-        if args.model in PINNED_PRO_MODELS and args.effort:
-            print("GPT-5.6 Pro is selected without --effort", file=sys.stderr)
-            return 2
-        if args.model not in PINNED_THINKING_MODELS | PINNED_PRO_MODELS:
-            print("consult only permits version-pinned GPT-5.6 Thinking or GPT-5.6 Pro", file=sys.stderr)
-            return 2
-        selected_model = args.model
-        selected_effort = args.effort
-        quality = "custom"
-    else:
-        selected_model, selected_effort = QUALITY_PRESETS[args.quality]
-        quality = args.quality
+    selected_model, selected_effort = QUALITY_PRESETS[args.quality]
+    quality = args.quality
 
     if not shutil.which("agbrowse"):
         print("agbrowse not found. Install with: npm install -g agbrowse", file=sys.stderr)

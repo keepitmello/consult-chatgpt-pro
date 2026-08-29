@@ -1,17 +1,23 @@
 ---
 name: "chatgpt-work-consult"
-description: "Send a packet into a new ChatGPT Work-project conversation, verify GPT-5.6 Sol at reasoning tier 매우 높음, wait for a terminal reply, and return the exact envelope. Use for ChatGPT Work consults, Work-project packet sends, and Aside work-consult result envelopes."
+description: "Recover a failed deterministic Consult send by adaptively operating an explicitly xhigh or pro ChatGPT Work-project conversation. Do not use for the normal fast path."
 ---
 
 # ChatGPT Work Consult
 
-Execute a packet consult on chatgpt.com inside the Work project. Do not rediscover the UI. Do not run this skill unless the task supplies an exact packet and exact receipt.
+Execute a packet consult on chatgpt.com inside the Work project. Do not
+rediscover the UI. Do not run this skill unless the task supplies an exact
+packet, exact receipt, and exactly one `QUALITY: xhigh` or `QUALITY: pro`.
+This is the adaptive recovery skill after `run_aside_repl_consult.py` detects UI
+drift; ordinary consults must not invoke an Aside agent.
 
 ## Inputs
 
 Accept the packet and receipt exactly as given in the task prompt. Do not rewrite, trim, wrap, or translate the packet.
 `PACKET_BEGIN` and `PACKET_END` are transport delimiters; send only the text
 between them.
+If `QUALITY` is absent or is not exactly `xhigh` or `pro`, return an error before
+opening or attaching to a browser tab.
 
 ## Browser and REPL
 
@@ -42,25 +48,30 @@ Known project-home path:
 
 ## Model and tier
 
-Required state:
+Both qualities require:
 
 - Model: **GPT-5.6 Sol** checked
-- Reasoning tier: **매우 높음**, shown as **4 of 5**
 
-Rules:
+Quality mapping:
 
-- Verify GPT-5.6 Sol is checked.
-- Verify the visible tier label is 매우 높음 (4 of 5).
-- Never explore or select the fifth slider stop.
-- If either state cannot be verified, stop before send.
+- `xhigh`: **매우 높음**, shown as **4 of 5**
+- `pro`: **Pro**, shown as **5 of 5**
+
+If the family or requested tier cannot be verified, stop before send.
 
 Known picker path:
 
-1. If the composer button already says `매우 높음`, click it once.
-2. From that menu, open `모델 선택` and require the checked radio
-   `GPT-5.6 Sol`.
-3. Return to the simple tier view and require `매우 높음, 5개 중 4번째`.
-4. Do not inspect the full page or probe alternative slider stops.
+1. Open the current tier button once.
+2. In the simple tier view, read the current `N개 중 M번째` index.
+3. Focus the `성능` menuitem and use only the required number of
+   `ArrowLeft`/`ArrowRight` presses to reach index 4 for `xhigh` or index 5 for
+   `pro`.
+4. Require `매우 높음, 5개 중 4번째` for `xhigh`, or
+   `Pro, 5개 중 5번째` for `pro`. Do not probe beyond the requested stop.
+5. Only after the tier is verified, open `모델 선택` and require the checked
+   radio `GPT-5.6 Sol`.
+6. Press `Escape` to close the picker. Do not try to navigate back from the
+   model submenu to the simple tier view.
 
 ## Composer and send
 
@@ -68,9 +79,12 @@ Known picker path:
 2. If contenteditable fill fails, take a fresh snapshot, focus the project
    textbox, press `Meta+A`, press `Backspace`, then use keyboard `insertText`
    with the exact packet.
-3. Read the textbox value/text back and require exact equality. If it differs,
-   repeat that clear-and-insert sequence once after a fresh snapshot; then stop
-   with an error rather than trying another input method.
+3. Read the ProseMirror contenteditable back by joining each direct child
+   block's `textContent` with `\n`, then require exact equality. Do not compare
+   `innerText`: it inserts an extra display newline between adjacent `<p>`
+   blocks. Do not trim or collapse whitespace. If the block-joined value
+   differs, repeat that clear-and-insert sequence once after a fresh snapshot;
+   then stop with an error rather than trying another input method.
 4. Send only after the exact comparison and Work/model/tier checks pass.
 
 ## Wait and extract
@@ -82,14 +96,29 @@ Known picker path:
 
 ## Output envelopes
 
-Success, exact format:
+For `xhigh`, success has this exact metadata:
 
 ```text
 ASIDE_WORK_CONSULT_RESULT
 RECEIPT: <exact receipt>
 SURFACE: Work
+QUALITY: xhigh
 MODEL: GPT-5.6 Sol
 TIER: 매우 높음 (4 of 5)
+RESPONSE_BEGIN
+<exact ChatGPT response including its receipt>
+RESPONSE_END
+```
+
+For `pro`, success has this exact metadata:
+
+```text
+ASIDE_WORK_CONSULT_RESULT
+RECEIPT: <exact receipt>
+SURFACE: Work
+QUALITY: pro
+MODEL: GPT-5.6 Sol
+TIER: Pro (5 of 5)
 RESPONSE_BEGIN
 <exact ChatGPT response including its receipt>
 RESPONSE_END
@@ -101,6 +130,7 @@ Failure, exact format:
 ASIDE_WORK_CONSULT_ERROR
 RECEIPT: <exact receipt>
 SURFACE: <last verified surface, or unknown>
+QUALITY: <xhigh-or-pro-or-missing>
 BLOCKER: <concrete blocker>
 ```
 

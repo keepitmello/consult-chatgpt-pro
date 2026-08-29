@@ -42,9 +42,11 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s consult-playwright/tes
 
 ## Usage
 
-Read `consult/SKILL.md`. Normal advice consults delegate to Aside and run only
-inside Work. The fallback retains the old strict picker, session, attachment,
-and code-artifact machinery.
+Read `consult/SKILL.md`. Normal advice consults use the deterministic Aside REPL
+runner and submit inside Work within 60 seconds. Every invocation must
+explicitly choose `--quality xhigh` or `--quality pro`; there is no default.
+The Aside agent skill is UI-drift recovery, followed by the hidden strict
+Playwright fallback.
 
 ## Security boundary
 

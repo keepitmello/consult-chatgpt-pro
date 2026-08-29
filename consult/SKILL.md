@@ -6,31 +6,38 @@ description: "Aside를 통해 ChatGPT Work 프로젝트에 패킷을 보내고 �
 # Consult
 
 Send one self-contained packet to ChatGPT through Aside. The outer agent owns
-the question, packet, receipt, saved evidence, and local verification. Aside's
-`chatgpt-work-consult` skill owns browser operation inside the **Work** project.
+the question, packet, receipt, saved evidence, and local verification. The
+deterministic Aside REPL runner owns the normal **Work** project path; Aside's
+`chatgpt-work-consult` agent skill owns UI-drift recovery only.
 
 ## Workflow
 
-1. State one precise question and what the answer must settle.
-2. Write a focused packet with the decisive evidence, constraints, failed
+1. Require exactly one explicit `--quality xhigh` or `--quality pro` flag.
+   With no flag, both flags, or any other value, stop before writing a packet or
+   opening Aside.
+2. State one precise question and what the answer must settle.
+3. Write a focused packet with the decisive evidence, constraints, failed
    attempts, and acceptance criteria. Check it for secrets and stale context.
    Ask for a natural Korean report while leaving structure and terminology to
    the consultant.
-3. Read Skill(browser-cli), then Skill(aside-browser). Use `aside exec` as a
-   persistent background PTY process.
-4. Give Aside:
-   - an exact random receipt;
-   - the exact packet text;
-   - the Work project URL from `CONSULT_CHATGPT_URL` or
-     `~/.codex/consult.env`;
-   - an explicit instruction to read its account skill
-     `chatgpt-work-consult` before any browser action.
+4. Launch `scripts/run_aside_repl_consult.py` as a persistent background
+   process with the exact quality and packet paths. The deterministic Aside REPL
+   fast path owns Work navigation, tier/model verification, send, terminal
+   wait, receipt recovery, and artifacts. Its in-browser guard must commit the
+   user turn in under 60 seconds or exit `75`; never extend or retry that
+   submission budget. Aside CLI may buffer `CONSULT_SUBMITTED` until completion,
+   so use the recorded `submitElapsedSeconds` as the timing evidence.
+   Exit `76` means the send was clicked but commit could not be proven; preserve
+   evidence and never retry or enter any fallback because that could duplicate
+   the turn.
+5. Read the saved response and JSON evidence. Require the receipt and quality
+   to match the invocation.
    Before launch, reject a URL unless it is HTTPS on `chatgpt.com`, its path
    starts with `/g/g-p-`, contains `-work/`, and ends in `/project`.
-5. Accept only an `ASIDE_WORK_CONSULT_RESULT` envelope whose receipt matches,
-   `SURFACE` is `Work`, `MODEL` is `GPT-5.6 Sol`, and `TIER` is `매우 높음`
-   (4 of 5). Save the exact text between `RESPONSE_BEGIN` and `RESPONSE_END`.
-6. Verify every material claim locally before acting on it.
+6. For `xhigh`, require `GPT-5.6 Sol` and
+   `매우 높음 (4 of 5)`. For `pro`, require `GPT-5.6 Sol` and
+   `Pro (5 of 5)`. Read the exact answer from the saved response file.
+7. Verify every material claim locally before acting on it.
 
 Never use temporary chat or global Chat. Never submit when the Work project,
 model, tier, or receipt is unverified.
@@ -42,9 +49,12 @@ model, tier, or receipt is unverified.
 ## Fallback
 
 Do not load the Playwright implementation during a normal consult. If Aside
-returns `ASIDE_WORK_CONSULT_ERROR`, its result envelope is invalid, or the task
-requires a code artifact Aside cannot retrieve, then read
-`fallback/consult-playwright/SKILL.md` and use that hidden fallback explicitly.
+REPL exits `75` because verified UI structure changed, read Skill(aside-browser)
+and run `aside exec` with the installed `chatgpt-work-consult` skill as the
+adaptive recovery path. Do not use an Aside agent for ordinary sends. If that
+recovery also returns `ASIDE_WORK_CONSULT_ERROR`, or the task requires a code
+artifact Aside cannot retrieve, then read `fallback/consult-playwright/SKILL.md`
+and use that hidden fallback explicitly.
 
 ## Completion
 

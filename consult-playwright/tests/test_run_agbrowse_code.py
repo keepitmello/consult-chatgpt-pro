@@ -81,6 +81,7 @@ class ConsultCodeChromeRouteTest(unittest.TestCase):
         os.environ.update(env)
         try:
             result = module.main([
+                "--quality", "xhigh",
                 "--prompt", "make a small test artifact",
                 "--output-zip", str(self.root / "artifact.zip"),
                 "--json-output", str(self.root / "result.json"),
@@ -112,6 +113,15 @@ class ConsultCodeChromeRouteTest(unittest.TestCase):
         )
         self.assertFalse(module.is_work_project_url("https://chatgpt.com/"))
         self.assertFalse(module.is_work_project_url("https://chatgpt.com/c/global"))
+
+    def test_missing_quality_is_rejected(self) -> None:
+        spec = importlib.util.spec_from_file_location("run_agbrowse_code_quality_test", HELPER)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        self.assertEqual(module.main([]), 2)
 
 
 if __name__ == "__main__":
