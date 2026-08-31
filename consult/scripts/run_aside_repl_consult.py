@@ -4,31 +4,89 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 from pathlib import Path
 import re
-import selectors
 import secrets
 import shutil
 import subprocess
 import sys
-import time
 from typing import Any, Sequence
 from urllib.parse import urlparse
+from zipfile import BadZipFile, ZipFile
 
 
 SUBMIT_TIMEOUT_SECONDS = 120
 DEFAULT_RESPONSE_TIMEOUT_SECONDS = 3600
 DEFAULT_CONFIG = Path.home() / ".codex" / "consult.env"
+DEFAULT_PROJECT_NAME = "Work"
+PROJECT_NAME_KEY = "CONSULT_PROJECT_NAME"
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 SUBMIT_MARKER = "ASIDE_REPL_SUBMIT_RESULT "
 SUBMIT_UNKNOWN_MARKER = "ASIDE_REPL_SUBMIT_UNKNOWN "
 RESPONSE_MARKER = "ASIDE_REPL_RESPONSE_RESULT "
+KOREAN_UPLOAD_PREAMBLE = (
+    "첨부한 독립형 컨텍스트 패킷을 검토하고, 그 안의 질문이나 작업에 답해 주세요.\n\n"
+    "이 패킷 외의 저장소, 터미널, 이전 대화는 볼 수 없다고 가정하세요. "
+    "판단에 필요한 근거가 패킷에 부족하면 그 점을 명확히 밝혀 주세요.\n\n"
+    "답변은 한국어 보고서로 작성해 주세요. 문제에 맞는 구조와 표현을 자유롭게 선택하되, "
+    "자연스럽고 이해하기 쉽게 설명해 주세요. 기술 용어와 영문 표현은 도움이 될 때 "
+    "자유롭게 사용해도 됩니다."
+)
 
 
 class SubmitUnknownError(RuntimeError):
     """The send click happened but provider commit could not be proven."""
+
+
+class SubmittedResponseError(RuntimeError):
+    """The turn committed in the live REPL, but response recovery failed."""
+
+    def __init__(
+        self,
+        submit_payload: dict[str, Any],
+        submit_elapsed: float,
+        transcript: str,
+    ) -> None:
+        super().__init__(
+            "submission committed but response recovery failed; recover the "
+            "same conversation and do not resend\n" + transcript
+        )
+        self.submit_payload = submit_payload
+        self.submit_elapsed = submit_elapsed
+        self.transcript = transcript
+
+
+def extract_topic(packet_body: str) -> str:
+    first_line = packet_body.splitlines()[0] if packet_body else ""
+    if not first_line.startswith("# "):
+        raise ValueError("packet first line must be a Markdown H1: # <topic>")
+    topic = first_line[2:].strip()
+    if not topic:
+        raise ValueError("packet topic is empty")
+    if len(topic) > 120:
+        raise ValueError("packet topic exceeds 120 characters")
+    return topic
+
+
+def build_composer_prompt(
+    topic: str,
+    consult_id: str,
+    artifact_output: str | None,
+) -> str:
+    artifact_instruction = (
+        "\n\n요청한 작업 결과는 zip 파일 하나로도 반환해 주세요."
+        if artifact_output
+        else ""
+    )
+    return (
+        f"{topic}\n"
+        f"ID: {consult_id}\n\n"
+        "답변 첫 줄에 위 ID를 그대로 써 주세요.\n\n"
+        f"{KOREAN_UPLOAD_PREAMBLE}{artifact_instruction}"
+    )
 
 
 def read_config_value(path: Path, key: str) -> str | None:
@@ -48,7 +106,7 @@ def read_config_value(path: Path, key: str) -> str | None:
     return None
 
 
-def is_work_project_url(value: str | None) -> bool:
+def is_chatgpt_project_url(value: str | None) -> bool:
     if not value:
         return False
     parsed = urlparse(value)
@@ -56,9 +114,26 @@ def is_work_project_url(value: str | None) -> bool:
         parsed.scheme == "https"
         and parsed.netloc == "chatgpt.com"
         and parsed.path.startswith("/g/g-p-")
-        and "-work/" in parsed.path
         and parsed.path.endswith("/project")
     )
+
+
+def composer_aria_label(project_name: str) -> str:
+    return f"{project_name}에서 새 채팅"
+
+
+def resolve_project_name(
+    *,
+    cli_value: str | None,
+    config_path: Path,
+) -> str:
+    raw = (
+        cli_value
+        or os.environ.get(PROJECT_NAME_KEY)
+        or read_config_value(config_path, PROJECT_NAME_KEY)
+        or DEFAULT_PROJECT_NAME
+    )
+    return raw.strip()
 
 
 def js(value: object) -> str:
@@ -68,36 +143,65 @@ def js(value: object) -> str:
 def build_repl_script(
     *,
     project_url: str,
+    project_name: str = DEFAULT_PROJECT_NAME,
     quality: str,
-    packet: str,
-    receipt: str,
+    packet_name: str,
+    packet_base64: str,
+    topic: str,
+    consult_id: str,
     response_timeout_ms: int,
+    artifact_output: str | None = None,
 ) -> str:
     target_index = 4 if quality == "xhigh" else 5
     target_label = "매우 높음" if quality == "xhigh" else "Pro"
+    composer_label = composer_aria_label(project_name)
     return f"""
 var projectUrl = {js(project_url)};
+var composerLabel = {js(composer_label)};
 var quality = {js(quality)};
-var packet = {js(packet)};
+var packetName = {js(packet_name)};
+var packetBase64 = {js(packet_base64)};
+var artifactRequested = {js(artifact_output is not None)};
+var composerPrompt = {js(build_composer_prompt(topic, consult_id, artifact_output))};
 var targetIndex = {target_index};
 var targetLabel = {js(target_label)};
 var submitStartedAt = Date.now();
 var submitStage = 'open-isolated-tab';
 var submitState = await Promise.race([
   (async () => {{
-    var tabsBeforeOpen = await listBrowserTabs();
-    var idsBeforeOpen = new Set(tabsBeforeOpen.map((tab) => tab.targetId));
-    var workPage = await openTab('about:blank');
+    var ownershipMarker = 'consult-owner-' + {js(consult_id)};
+    var ownershipUrl = 'data:text/html,<title>' + ownershipMarker + '</title>';
+    var workPage = await openTab(ownershipUrl);
     var openedTabs = await listBrowserTabs();
-    var ownedTab = openedTabs.find((tab) => !idsBeforeOpen.has(tab.targetId));
-    if (!ownedTab) throw new Error('isolated consult tab not found');
+    var ownedTabs = openedTabs.filter(
+      (tab) => tab.title === ownershipMarker && tab.url === ownershipUrl
+    );
+    if (ownedTabs.length !== 1) throw new Error('isolated consult tab ownership is ambiguous');
+    var ownedTab = ownedTabs[0];
     submitStage = 'load-work-project';
     await workPage.goto(projectUrl);
     await workPage.waitForLoadState('domcontentloaded');
     await snapshot(workPage, {{ interactive: true }});
-    submitStage = 'wait-work-composer';
-    var composer = workPage.getByRole('textbox', {{ name: 'Work에서 새 채팅' }});
-    await composer.waitFor({{ state: 'visible', timeout: 20000 }});
+    submitStage = 'wait-project-composer';
+    var composer = workPage.locator('#prompt-textarea[contenteditable="true"]').and(
+      workPage.getByRole('textbox', {{ name: composerLabel, exact: true }})
+    );
+    try {{
+      await composer.waitFor({{ state: 'visible', timeout: 60000 }});
+    }} catch (error) {{
+      var found = await workPage.locator('#prompt-textarea').evaluateAll((els) =>
+        els.map((el) => ({{
+          ariaLabel: el.getAttribute('aria-label'),
+          contenteditable: el.getAttribute('contenteditable')
+        }}))
+      ).catch(() => []);
+      throw new Error(
+        'project composer not visible: expected ' + composerLabel +
+        ' found ' + JSON.stringify(found) +
+        ' url=' + workPage.url() +
+        ' title=' + (await workPage.title())
+      );
+    }}
     var assistantCountBefore = await workPage.locator('[data-message-author-role="assistant"]').count();
     if (assistantCountBefore !== 0) throw new Error('isolated Work composer contains stale assistant turns');
     submitStage = 'select-tier';
@@ -123,23 +227,29 @@ var submitState = await Promise.race([
     await sol.waitFor({{ state: 'visible', timeout: 5000 }});
     if ((await sol.getAttribute('aria-checked')) !== 'true') throw new Error('GPT-5.6 Sol not checked');
     await workPage.keyboard.press('Escape');
+    submitStage = 'attach-packet';
+    var fileInput = workPage.locator('#upload-files');
+    await fileInput.setInputFiles([{{
+      name: packetName,
+      mimeType: 'text/markdown',
+      buffer: Buffer.from(packetBase64, 'base64')
+    }}]);
+    var attachmentChip = workPage.getByText(packetName, {{ exact: true }}).last();
+    await attachmentChip.waitFor({{ state: 'visible', timeout: 60000 }});
     submitStage = 'fill-composer';
-    await composer.click();
-    await workPage.keyboard.press('Meta+A');
-    await workPage.keyboard.press('Backspace');
-    await workPage.keyboard.insertText(packet);
-    var canonical = await composer.evaluate((el) => Array.from(el.children).map((child) => child.textContent || '').join('\\n'));
-    if (canonical !== packet) {{
-      await composer.click();
-      await workPage.keyboard.press('Meta+A');
-      await workPage.keyboard.press('Backspace');
-      await workPage.keyboard.insertText(packet);
-      canonical = await composer.evaluate((el) => Array.from(el.children).map((child) => child.textContent || '').join('\\n'));
-    }}
-    if (canonical !== packet) throw new Error('composer canonical text mismatch');
+    await composer.focus();
+    await composer.press('Meta+A');
+    await composer.press('Backspace');
+    await workPage.keyboard.insertText(composerPrompt);
+    var composerValue = await composer.evaluate(
+      (el) => Array.from(el.children).map((child) => child.textContent || '').join('\\n')
+    );
+    if (composerValue !== composerPrompt) throw new Error('composer prompt mismatch');
     submitStage = 'ready-to-send';
-    var send = workPage.getByRole('button', {{ name: '프롬프트 보내기' }});
-    await send.waitFor({{ state: 'visible', timeout: 5000 }});
+    var send = workPage.locator(
+      '#composer-submit-button:not(:disabled):not([aria-disabled="true"]):not([data-visually-disabled])'
+    );
+    await send.waitFor({{ state: 'visible', timeout: 60000 }});
     return {{ workPage, ownedTargetId: ownedTab.targetId, send }};
   }})(),
   new Promise((_, reject) => setTimeout(
@@ -151,13 +261,13 @@ var workPage = submitState.workPage;
 var remainingSubmitMs = 120000 - (Date.now() - submitStartedAt);
 if (remainingSubmitMs <= 0) throw new Error('pre-submit preparation exceeded 120 seconds');
 submitStage = 'commit-user-turn';
-await submitState.send.click();
-var userTurn = workPage.locator('[data-message-author-role="user"]').filter({{ hasText: {js(receipt)} }}).last();
+await submitState.send.click({{ timeout: remainingSubmitMs }});
+var userTurn = workPage.locator('[data-message-author-role="user"]').filter({{ hasText: {js(f"ID: {consult_id}")} }}).last();
 try {{
   await userTurn.waitFor({{ state: 'visible', timeout: remainingSubmitMs }});
 }} catch (error) {{
   console.log({js(SUBMIT_UNKNOWN_MARKER)} + JSON.stringify({{
-    receipt: {js(receipt)},
+    id: {js(consult_id)},
     quality,
     reason: 'send clicked but user turn commit was not verified before deadline'
   }}));
@@ -167,7 +277,7 @@ try {{
 var submitElapsedMs = Date.now() - submitStartedAt;
 if (submitElapsedMs >= 120000) {{
   console.log({js(SUBMIT_UNKNOWN_MARKER)} + JSON.stringify({{
-    receipt: {js(receipt)},
+    id: {js(consult_id)},
     quality,
     reason: 'user turn committed after 120-second deadline'
   }}));
@@ -182,126 +292,131 @@ console.log({js(SUBMIT_MARKER)} + JSON.stringify({{
   model: 'GPT-5.6 Sol',
   tier: quality === 'xhigh' ? '매우 높음 (4 of 5)' : 'Pro (5 of 5)',
   submitElapsedMs,
-  conversationUrl: submittedTab ? submittedTab.url : workPage.url()
+  conversationUrl: submittedTab ? submittedTab.url : workPage.url(),
+  targetId: submitState.ownedTargetId
 }}));
 var responseStartedAt = Date.now();
-var assistantTurns = workPage.locator('[data-message-author-role="assistant"]');
-var assistant = assistantTurns.nth(0);
-await assistant.waitFor({{ state: 'visible', timeout: {response_timeout_ms} }});
+var responseDeadline = responseStartedAt + {response_timeout_ms};
+var remainingResponseMs = () => Math.max(1, responseDeadline - Date.now());
+var assistant = workPage.locator('[data-message-author-role="assistant"]').nth(0);
+await assistant.waitFor({{ state: 'visible', timeout: remainingResponseMs() }});
 var copyResponse = workPage.getByRole('button', {{ name: /^(응답 복사|Copy response)$/ }}).last();
-await copyResponse.waitFor({{ state: 'visible', timeout: {response_timeout_ms} }});
+await copyResponse.waitFor({{ state: 'visible', timeout: remainingResponseMs() }});
 var responseText = await assistant.innerText();
-if (!responseText.includes({js(receipt)})) throw new Error('receipt missing from assistant response');
-var completedTabs = await listBrowserTabs();
-var completedTab = completedTabs.find((tab) => tab.targetId === submitState.ownedTargetId);
-var finalConversationUrl = completedTab ? completedTab.url : workPage.url();
-await workPage.close().catch(() => {{}});
+if (!responseText.includes({js(f"ID: {consult_id}")})) throw new Error('ID missing from assistant response');
+var artifact = null;
+if (artifactRequested) {{
+  var artifactButton = assistant.locator('button').filter({{ hasText: /\\.zip$/i }}).last();
+  await artifactButton.waitFor({{ state: 'visible', timeout: remainingResponseMs() }});
+  var downloadPromise = workPage.waitForEvent('download', {{ timeout: remainingResponseMs() }});
+  await artifactButton.click({{ timeout: remainingResponseMs() }});
+  var download = await downloadPromise;
+  var temporaryPath = await download.path();
+  if (!temporaryPath) throw new Error('artifact download path unavailable');
+  artifact = {{
+    temporaryPath,
+    suggestedFilename: download.suggestedFilename()
+  }};
+}}
+var finalConversationUrl = workPage.url();
+await closeTab(workPage).catch(() => {{}});
 console.log({js(RESPONSE_MARKER)} + JSON.stringify({{
   ok: true,
   responseText,
+  artifact,
   responseElapsedMs: Date.now() - responseStartedAt,
   conversationUrl: finalConversationUrl
 }}));
 """.strip()
 
 
-def run_repl_streaming(
+def zip_is_valid(path: Path) -> bool:
+    try:
+        with ZipFile(path) as archive:
+            if not archive.namelist():
+                return False
+            bad_file = archive.testzip()
+    except (BadZipFile, OSError):
+        return False
+    return bad_file is None
+
+
+def repl_stdin_command(script: str) -> str:
+    """Wrap multiline, top-level-await code in one REPL input line."""
+    async_function = "Object.getPrototypeOf(async function(){}).constructor"
+    return f"await new ({async_function})({json.dumps(script)})()\n"
+
+
+def run_repl_process(script: str, *, timeout: int) -> str:
+    try:
+        completed = subprocess.run(
+            ["aside", "repl"],
+            input=repl_stdin_command(script),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout + 10,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        output = exc.stdout or ""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        return output
+    return completed.stdout
+
+
+def marker_payload(transcript: str, marker: str) -> dict[str, Any] | None:
+    for line in transcript.splitlines():
+        clean = ANSI_RE.sub("", line)
+        if clean.startswith(marker):
+            payload: dict[str, Any] = json.loads(clean[len(marker):])
+            return payload
+    return None
+
+
+def run_repl_consult(
     script: str,
     *,
     submit_timeout: int,
     response_timeout: int,
 ) -> tuple[dict[str, Any], dict[str, Any], float, float, str]:
-    started = time.monotonic()
-    process = subprocess.Popen(
-        ["aside", "repl", script],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=1,
+    transcript = run_repl_process(
+        script,
+        timeout=submit_timeout + response_timeout + 30,
     )
-    assert process.stdout is not None
-    selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ)
-    transcript: list[str] = []
-    submit_payload: dict[str, Any] | None = None
-    submit_unknown_payload: dict[str, Any] | None = None
-    response_payload: dict[str, Any] | None = None
-    submit_elapsed = 0.0
-    # Aside CLI buffers REPL output until the JavaScript finishes, so Python
-    # cannot observe the submit marker in real time. The in-JS Promise.race owns
-    # the 120-second submit deadline; this is only a whole-process safety bound.
-    process_deadline = started + submit_timeout + response_timeout
-    response_deadline: float | None = None
-
-    try:
-        while response_payload is None:
-            now = time.monotonic()
-            deadline = process_deadline if submit_payload is None else response_deadline
-            assert deadline is not None
-            if now >= deadline:
-                phase = "REPL process" if submit_payload is None else "response recovery"
-                raise TimeoutError(f"Aside REPL {phase} timed out")
-            events = selector.select(timeout=min(1.0, deadline - now))
-            if not events:
-                if process.poll() is not None:
-                    break
-                continue
-            line = process.stdout.readline()
-            if not line:
-                if process.poll() is not None:
-                    break
-                continue
-            transcript.append(line)
-            clean = ANSI_RE.sub("", line).rstrip("\n")
-            if clean.startswith(SUBMIT_MARKER):
-                submit_payload = json.loads(clean[len(SUBMIT_MARKER):])
-                submit_elapsed = float(submit_payload["submitElapsedMs"]) / 1000
-                response_deadline = time.monotonic() + response_timeout
-                print(
-                    f"CONSULT_SUBMITTED quality={submit_payload['quality']} "
-                    f"elapsed={submit_elapsed:.3f}s url={submit_payload['conversationUrl']}",
-                    flush=True,
-                )
-            elif clean.startswith(SUBMIT_UNKNOWN_MARKER):
-                submit_unknown_payload = json.loads(
-                    clean[len(SUBMIT_UNKNOWN_MARKER):]
-                )
-            elif clean.startswith(RESPONSE_MARKER):
-                response_payload = json.loads(clean[len(RESPONSE_MARKER):])
-        process.wait(timeout=5)
-    except BaseException:
-        process.kill()
-        process.wait()
-        process.stdout.close()
-        raise
-    finally:
-        selector.close()
-
-    remaining = process.stdout.read()
-    process.stdout.close()
-    if remaining:
-        transcript.append(remaining)
+    submit_unknown_payload = marker_payload(transcript, SUBMIT_UNKNOWN_MARKER)
     if submit_unknown_payload is not None:
         raise SubmitUnknownError(
             "submission state unknown; do not retry\n"
             + json.dumps(submit_unknown_payload, ensure_ascii=False)
             + "\n"
-            + "".join(transcript)
+            + transcript
         )
+    submit_payload = marker_payload(transcript, SUBMIT_MARKER)
     if submit_payload is None:
         raise RuntimeError(
-            "Aside REPL exited before submission marker\n" + "".join(transcript)
+            "Aside REPL exited before submission marker\n" + transcript
         )
+    submit_elapsed = float(submit_payload["submitElapsedMs"]) / 1000
+    print(
+        f"CONSULT_SUBMITTED quality={submit_payload['quality']} "
+        f"elapsed={submit_elapsed:.3f}s url={submit_payload['conversationUrl']}",
+        flush=True,
+    )
+    response_payload = marker_payload(transcript, RESPONSE_MARKER)
     if response_payload is None:
-        raise RuntimeError(
-            "Aside REPL exited before response marker\n" + "".join(transcript)
+        raise SubmittedResponseError(
+            submit_payload,
+            submit_elapsed,
+            transcript,
         )
     return (
         submit_payload,
         response_payload,
         submit_elapsed,
         float(response_payload["responseElapsedMs"]) / 1000,
-        "".join(transcript),
+        transcript,
     )
 
 
@@ -310,10 +425,16 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--quality", choices=("xhigh", "pro"), required=True)
     parser.add_argument("--packet", required=True)
     parser.add_argument("--url", default=None)
+    parser.add_argument("--project", default=None)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--response-output", default=".consult/consult-response.md")
     parser.add_argument("--json-output", default=".consult/aside-consult-response.json")
     parser.add_argument("--stderr-output", default=".consult/aside-consult-stderr.log")
+    parser.add_argument(
+        "--artifact-output",
+        default=None,
+        help="Save one generated zip artifact here; uses the same Aside conversation.",
+    )
     parser.add_argument("--response-timeout", type=int, default=DEFAULT_RESPONSE_TIMEOUT_SECONDS)
     return parser.parse_args(argv)
 
@@ -328,22 +449,48 @@ def main(argv: Sequence[str]) -> int:
         or os.environ.get("CONSULT_CHATGPT_URL")
         or read_config_value(Path(args.config).expanduser(), "CONSULT_CHATGPT_URL")
     )
-    if not is_work_project_url(project_url):
-        print("a verified ChatGPT Work project URL is required", file=sys.stderr)
+    if not is_chatgpt_project_url(project_url):
+        print("a verified ChatGPT project URL is required", file=sys.stderr)
+        return 2
+    assert isinstance(project_url, str)
+    project_name = resolve_project_name(
+        cli_value=args.project,
+        config_path=Path(args.config).expanduser(),
+    )
+    if not project_name:
+        print("a ChatGPT project name is required", file=sys.stderr)
         return 2
     packet_path = Path(args.packet).expanduser()
     try:
-        body = packet_path.read_text(encoding="utf-8")
+        raw_body = packet_path.read_text(encoding="utf-8")
     except OSError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    receipt = f"WORK_CONSULT_RECEIPT: {secrets.token_hex(16)}"
-    packet = f"{receipt}\n{body}"
+    if not raw_body.strip():
+        print("packet is empty", file=sys.stderr)
+        return 2
+    try:
+        topic = extract_topic(raw_body)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    packet_source = str(packet_path.resolve())
+    packet_base64 = base64.b64encode(raw_body.encode("utf-8")).decode("ascii")
+    consult_id = secrets.token_hex(16)
     stderr_path = Path(args.stderr_output).expanduser()
     response_path = Path(args.response_output).expanduser()
     json_path = Path(args.json_output).expanduser()
-    for path in (stderr_path, response_path, json_path):
+    artifact_path = (
+        Path(args.artifact_output).expanduser().resolve()
+        if args.artifact_output
+        else None
+    )
+    for path in (stderr_path, response_path, json_path, artifact_path):
+        if path is None:
+            continue
         path.parent.mkdir(parents=True, exist_ok=True)
+    if artifact_path is not None:
+        artifact_path.unlink(missing_ok=True)
 
     try:
         (
@@ -352,13 +499,17 @@ def main(argv: Sequence[str]) -> int:
             submit_elapsed,
             response_elapsed,
             transcript,
-        ) = run_repl_streaming(
+        ) = run_repl_consult(
             build_repl_script(
                 project_url=project_url,
+                project_name=project_name,
                 quality=args.quality,
-                packet=packet,
-                receipt=receipt,
+                packet_name=packet_path.name or "consult-packet.md",
+                packet_base64=packet_base64,
+                topic=topic,
+                consult_id=consult_id,
                 response_timeout_ms=args.response_timeout * 1000,
+                artifact_output=str(artifact_path) if artifact_path else None,
             ),
             submit_timeout=SUBMIT_TIMEOUT_SECONDS,
             response_timeout=args.response_timeout,
@@ -367,6 +518,32 @@ def main(argv: Sequence[str]) -> int:
         stderr_path.write_text(str(exc), encoding="utf-8")
         print(str(exc), file=sys.stderr)
         return 76
+    except SubmittedResponseError as exc:
+        submitted = exc.submit_payload
+        message = str(exc)
+        stderr_path.write_text(
+            message,
+            encoding="utf-8",
+        )
+        evidence = {
+            "ok": False,
+            "status": "submitted_response_unavailable",
+            "id": consult_id,
+            "topic": topic,
+            "quality": args.quality,
+            "model": submitted["model"],
+            "tier": submitted["tier"],
+            "conversationUrl": submitted["conversationUrl"],
+            "targetId": submitted["targetId"],
+            "submitElapsedSeconds": round(exc.submit_elapsed, 3),
+            "packetPath": packet_source,
+        }
+        json_path.write_text(
+            json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(message, file=sys.stderr)
+        return 77
     except (TimeoutError, RuntimeError, json.JSONDecodeError) as exc:
         stderr_path.write_text(str(exc), encoding="utf-8")
         print(str(exc), file=sys.stderr)
@@ -374,17 +551,61 @@ def main(argv: Sequence[str]) -> int:
     stderr_path.write_text(transcript, encoding="utf-8")
     response_text = str(response_payload["responseText"])
     response_path.write_text(response_text + "\n", encoding="utf-8")
+    artifact_copy_error = None
+    if artifact_path is not None:
+        try:
+            artifact_payload = response_payload["artifact"]
+            temporary_path = Path(str(artifact_payload["temporaryPath"]))
+            if not temporary_path.is_file():
+                raise FileNotFoundError(temporary_path)
+            shutil.copyfile(temporary_path, artifact_path)
+        except (KeyError, OSError, TypeError) as exc:
+            artifact_copy_error = str(exc)
+    if artifact_path is not None and (
+        artifact_copy_error is not None or not zip_is_valid(artifact_path)
+    ):
+        message = f"zip verification failed: {artifact_path}"
+        if artifact_copy_error is not None:
+            message += f" ({artifact_copy_error})"
+        stderr_path.write_text(transcript + "\n" + message + "\n", encoding="utf-8")
+        evidence = {
+            "ok": False,
+            "status": "submitted_artifact_unavailable",
+            "id": consult_id,
+            "topic": topic,
+            "quality": args.quality,
+            "model": submit_payload["model"],
+            "tier": submit_payload["tier"],
+            "conversationUrl": response_payload["conversationUrl"],
+            "targetId": submit_payload["targetId"],
+            "submitElapsedSeconds": round(submit_elapsed, 3),
+            "responseElapsedSeconds": round(response_elapsed, 3),
+            "responseOutput": str(response_path),
+            "packetPath": packet_source,
+            "artifactOutput": str(artifact_path),
+        }
+        json_path.write_text(
+            json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(message, file=sys.stderr)
+        return 77
     evidence = {
         "ok": True,
-        "receipt": receipt,
+        "id": consult_id,
+        "topic": topic,
         "quality": args.quality,
         "model": submit_payload["model"],
         "tier": submit_payload["tier"],
         "conversationUrl": response_payload["conversationUrl"],
+        "targetId": submit_payload["targetId"],
         "submitElapsedSeconds": round(submit_elapsed, 3),
         "responseElapsedSeconds": round(response_elapsed, 3),
         "responseOutput": str(response_path),
+        "packetPath": packet_source,
     }
+    if artifact_path is not None:
+        evidence["artifactOutput"] = str(artifact_path)
     json_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"CONSULT_COMPLETE response={response_path}", flush=True)
     return 0

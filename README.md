@@ -14,7 +14,8 @@ opinion through Aside.
 
 - Aside Browser CLI
 - A ChatGPT account signed in inside Aside Browser
-- Access to the ChatGPT project named `Work`
+- Access to a ChatGPT project; set `CONSULT_CHATGPT_URL` and
+  `CONSULT_PROJECT_NAME` in `~/.codex/consult.env`
 - Python, Node.js, Chrome, and `agbrowse` only for the fallback
 
 ## Install

@@ -4,9 +4,15 @@
 
 - `aside --version` succeeds.
 - `~/.aside/u/0/skills/user/chatgpt-work-consult/SKILL.md` exists and validates.
-- `CONSULT_CHATGPT_URL` resolves to the ChatGPT project named `Work`.
+- `CONSULT_CHATGPT_URL` and `CONSULT_PROJECT_NAME` in `~/.codex/consult.env`
+  select the ChatGPT project. The name is the visible project title, used as
+  `{name}에서 새 채팅`. Default name is `Work` when unset.
 - The invocation contains exactly one `--quality xhigh` or `--quality pro`.
 - The packet is self-contained and safe to disclose to Aside and ChatGPT.
+- The packet's first line is one concise Markdown H1 containing only the subject
+  title (`# <title>`). The calling main session owns it; the runner extracts it
+  without inventing one. Do not prefix or suffix task framing such as
+  `Consult`, `review request`, `검토`, `리뷰 요청`, or `분석 요청`.
 
 If the Aside account skill is missing, run:
 
@@ -17,7 +23,7 @@ bash <consult-skill-dir>/scripts/install-aside-skill.sh
 Fail before the REPL runner unless the URL matches:
 
 ```text
-https://chatgpt.com/g/g-p-...-work/project
+https://chatgpt.com/g/g-p-.../project
 ```
 
 Global `/`, global `/c/...`, temporary chat, a non-HTTPS URL, or another host is
@@ -38,13 +44,81 @@ python3 <consult-skill-dir>/scripts/run_aside_repl_consult.py \
 
 The runner's in-browser guard must commit the user turn within 120 seconds and
 records `submitElapsedSeconds`; it exits `75` at that boundary. Never increase
-or blindly retry the budget. Aside CLI can buffer `CONSULT_SUBMITTED` until the
-response finishes, so the saved timing is authoritative. Aside REPL does not
-create a normal Aside GUI conversation entry.
+or blindly retry the budget. One REPL process keeps the Work page alive through
+submission, response completion, and optional download. Never split those
+stages across REPL processes: closing the first process can terminate the
+generation before the conversation is persisted. Aside may buffer both markers
+until the process exits; parse the final transcript to distinguish pre-submit,
+committed-without-response, and complete outcomes. Aside REPL does not create a
+normal Aside GUI conversation entry.
+
+Parallel runners open unique ID-derived `data:` marker tabs and resolve
+their `targetId` by exact title and URL before navigating to Work. A
+before/after "new tab" set difference is unsafe because simultaneous runners
+can both claim the same target.
+
+Python reads `--packet` itself and sends the bytes over REPL stdin. The browser
+receives an in-memory file payload, never the local packet path. The composer
+starts with the packet H1 topic, then `ID: <hex>`, followed by a short
+ID-bound instruction. Packet location, blank lines,
+and trailing newlines therefore do not participate in browser input validation.
+The runner uses the composer's unrestricted `#upload-files` input and waits for
+the exact filename chip. A chip can still show an active upload, so submission
+also waits until the send button has neither native `disabled`,
+`aria-disabled="true"`, nor `data-visually-disabled`; image/video-only inputs
+and fixed sleeps are not valid packet transports.
+Aside confines `download.saveAs()` to its session directory. The browser returns
+`download.path()` instead, and the Python runner copies that verified local file
+to `--artifact-output`.
+Aside confines `download.saveAs()` to its session directory. The browser returns
+`download.path()` instead, and the Python runner copies that verified local file
+to `--artifact-output`.
+
+For a code artifact, use the same runner:
+
+```bash
+python3 <consult-skill-dir>/scripts/run_aside_repl_consult.py \
+  --quality pro \
+  --packet .consult/<run>/packet.md \
+  --artifact-output .consult/<run>/artifact.zip \
+  --response-output .consult/<run>/response.md \
+  --json-output .consult/<run>/result.json \
+  --stderr-output .consult/<run>/stderr.log
+```
+
+Aside waits for the ChatGPT download event, saves the zip directly, and the
+runner requires a nonempty zip with a valid CRC.
 
 Exit `76` is `SUBMIT_UNKNOWN`: the click occurred but the user turn was not
 commit-verified before the deadline. Preserve its evidence and never retry,
 invoke the Aside agent, or enter the Playwright fallback.
+
+Exit `77` is `SUBMITTED_RESPONSE_UNAVAILABLE`: the exact user turn committed,
+but response tracking ended. Use the saved `conversationUrl` to recover that
+conversation only. Do not send the packet again.
+
+## Manual recovery and explicit resend
+
+For exit `77`, read `targetId` and `conversationUrl` from the saved JSON. Attach
+to the existing tab when it is still open:
+
+```bash
+aside repl "var p = await attachBrowserTab('<targetId>'); await p.snapshot()"
+```
+
+If the tab is gone, reopen the committed conversation without sending:
+
+```bash
+aside repl "var p = await openTab('<conversationUrl>'); await p.snapshot()"
+```
+
+Continue in an interactive `aside repl` when selector inspection or a manual
+download is needed. This is recovery of the existing turn, not a resend.
+
+If the operator deliberately chooses to resend, rerun the original
+`run_aside_repl_consult.py` command with the same packet and a new run directory
+for every output path. That creates a new Work conversation. Never overwrite
+the first run's evidence and never trigger this automatically.
 
 ## Accept or reject
 
@@ -66,9 +140,10 @@ tier: Pro (5 of 5)
 submitElapsedSeconds: <120
 ```
 
-Reject a missing or mismatched quality/receipt, an unverified model or tier, a
+Reject a missing or mismatched quality/ID, an unverified model or tier, a
 partial response, or a submission at or above 120 seconds.
 
-On exit `75` caused by verified UI drift, preserve evidence and use `aside exec`
-plus `chatgpt-work-consult` once as adaptive recovery. Only then read
-`fallback/consult-playwright/SKILL.md`.
+Reject an answer that does not address the attached packet.
+
+On exit `75` caused by pre-send UI drift, preserve evidence and stop. Do not
+hand the packet to another sender. Consult has one continuous Aside REPL path.

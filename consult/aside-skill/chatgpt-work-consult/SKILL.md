@@ -1,19 +1,19 @@
 ---
 name: "chatgpt-work-consult"
-description: "Recover a failed deterministic Consult send by adaptively operating an explicitly xhigh or pro ChatGPT Work-project conversation. Do not use for the normal fast path."
+description: "Recover a failed deterministic Consult send by adaptively operating an explicitly xhigh or pro ChatGPT project conversation. Do not use for the normal fast path."
 ---
 
 # ChatGPT Work Consult
 
-Execute a packet consult on chatgpt.com inside the Work project. Do not
+Execute a packet consult on chatgpt.com inside the project named in the task. Do not
 rediscover the UI. Do not run this skill unless the task supplies an exact
-packet, exact receipt, and exactly one `QUALITY: xhigh` or `QUALITY: pro`.
+packet, exact ID, and exactly one `QUALITY: xhigh` or `QUALITY: pro`.
 This is the adaptive recovery skill after `run_aside_repl_consult.py` detects UI
 drift; ordinary consults must not invoke an Aside agent.
 
 ## Inputs
 
-Accept the packet and receipt exactly as given in the task prompt. Do not rewrite, trim, wrap, or translate the packet.
+Accept the packet and ID exactly as given in the task prompt. Do not rewrite, trim, wrap, or translate the packet.
 `PACKET_BEGIN` and `PACKET_END` are transport delimiters; send only the text
 between them.
 If `QUALITY` is absent or is not exactly `xhigh` or `pro`, return an error before
@@ -24,25 +24,25 @@ opening or attaching to a browser tab.
 - Prefer an already logged-in chatgpt.com tab. If none exists, open `https://chatgpt.com`.
 - Snapshot first. After every action, take a fresh snapshot and use only new refs.
 - Do not declare reusable top-level `const` or `let` bindings. Store intermediate
-  values on `globalThis` with a receipt-derived key, or use a fresh `var` name;
+  values on `globalThis` with an ID-derived key, or use a fresh `var` name;
   the REPL scope persists across calls.
 
 ## Surface: Work project, new normal chat
 
-1. Enter the ChatGPT project named **Work**.
+1. Enter the ChatGPT project named in the task (`PROJECT` / visible name).
 2. Create a **new normal conversation** inside that project.
 3. Never use temporary chat.
 4. Never submit from global Chat.
 5. Do not open or inspect unrelated existing conversations.
-6. Before send, verify a visible Work project marker/breadcrumb **and** a project-owned composer.
-7. If Work cannot be verified, stop before send.
+6. Before send, verify a visible project marker/breadcrumb **and** a project-owned composer.
+7. If that project cannot be verified, stop before send.
 
 Known project-home path:
 
-1. Navigate directly to the supplied Work project URL. Ignore temporary/global
+1. Navigate directly to the supplied project URL. Ignore temporary/global
    Chat tabs rather than repairing them.
-2. Require page title `ChatGPT - Work`, heading `Work`, and textbox
-   `Work에서 새 채팅`. These three signals prove the project-owned composer.
+2. Require page title `ChatGPT - <PROJECT>`, heading `<PROJECT>`, and textbox
+   `<PROJECT>에서 새 채팅`. These three signals prove the project-owned composer.
 3. The project-home composer itself starts a new Work conversation. Do not open
    an existing chat from the project list.
 
@@ -92,7 +92,7 @@ Known picker path:
 - Wait until generation is terminal. Do not harvest a partial reply.
 - Recover the exact assistant text from an accessibility snapshot.
 - Use Copy only as an optional fallback if snapshot text is incomplete.
-- Require the assistant reply to contain the exact receipt before reporting success.
+- Require the assistant reply to contain the exact ID before reporting success.
 
 ## Output envelopes
 
@@ -100,13 +100,13 @@ For `xhigh`, success has this exact metadata:
 
 ```text
 ASIDE_WORK_CONSULT_RESULT
-RECEIPT: <exact receipt>
+ID: <exact ID>
 SURFACE: Work
 QUALITY: xhigh
 MODEL: GPT-5.6 Sol
 TIER: 매우 높음 (4 of 5)
 RESPONSE_BEGIN
-<exact ChatGPT response including its receipt>
+<exact ChatGPT response including its ID>
 RESPONSE_END
 ```
 
@@ -114,13 +114,13 @@ For `pro`, success has this exact metadata:
 
 ```text
 ASIDE_WORK_CONSULT_RESULT
-RECEIPT: <exact receipt>
+ID: <exact ID>
 SURFACE: Work
 QUALITY: pro
 MODEL: GPT-5.6 Sol
 TIER: Pro (5 of 5)
 RESPONSE_BEGIN
-<exact ChatGPT response including its receipt>
+<exact ChatGPT response including its ID>
 RESPONSE_END
 ```
 
@@ -128,10 +128,10 @@ Failure, exact format:
 
 ```text
 ASIDE_WORK_CONSULT_ERROR
-RECEIPT: <exact receipt>
+ID: <exact ID>
 SURFACE: <last verified surface, or unknown>
 QUALITY: <xhigh-or-pro-or-missing>
 BLOCKER: <concrete blocker>
 ```
 
-Never fabricate response text. If Work, model, tier, composer, generation, or receipt matching fails, emit the error envelope and stop.
+Never fabricate response text. If Work, model, tier, composer, generation, or ID matching fails, emit the error envelope and stop.
