@@ -3,8 +3,9 @@
 A two-axis Consult package for obtaining a verified ChatGPT project Chat second
 opinion through Aside.
 
-- `consult/` is the normal Agent Skill. It owns packet quality, receipts, saved
-  evidence, and local verification.
+- `consult/` is the normal Agent Skill. `SKILL.md` keeps only when, quality,
+  packet, `consult` commands, and verification. Engine and recovery live in
+  `consult/references/`.
 - `consult/aside-skill/chatgpt-work-consult/` teaches Aside's own agent the
   stable project Chat browser workflow.
 - `consult-playwright/` is the uninstalled agbrowse fallback. The main package
@@ -55,8 +56,8 @@ consult recover .consult/<run>/result.json
 ```
 
 Every send must explicitly choose `xhigh` or `pro`; there is no default.
-The Aside agent skill is UI-drift recovery, followed by the hidden strict
-Playwright fallback.
+Engine, Chat surface, and recovery live in `consult/references/`.
+Playwright is not an automatic sender.
 
 ## Security boundary
 
