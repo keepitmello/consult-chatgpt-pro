@@ -725,7 +725,7 @@ print("response phase failed")
             self.assertEqual(evidence["status"], "submitted_response_unavailable")
             self.assertEqual(
                 evidence["conversationUrl"],
-                "https://chatgpt.com/g/g-p-test-work/c/1",
+                "https://chatgpt.com/c/1",
             )
             self.assertEqual(evidence["targetId"], "target")
 
@@ -1034,6 +1034,124 @@ print('ASIDE_REPL_RESPONSE_RESULT {"responseText":"answer","idMatched":false,"pa
                         ]
                     )
         self.assertEqual(result, 2)
+
+    def test_main_keeps_submit_conversation_when_response_is_project_home(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fake = root / "aside"
+            fake.write_text(
+                """#!/usr/bin/env python3
+print('ASIDE_REPL_SUBMIT_RESULT {"quality":"xhigh","model":"GPT-5.6 Sol","tier":"매우 높음 (4 of 5)","submitElapsedMs":1234,"conversationUrl":"https://chatgpt.com/g/g-p-test-work/c/6a99ef53-3d80-83ee-a84c-187e4a415929","targetId":"target"}')
+print('ASIDE_REPL_RESPONSE_RESULT {"responseText":"answer","idMatched":true,"packetUnread":false,"responseElapsedMs":25,"conversationUrl":"https://chatgpt.com/g/g-p-test-work/project"}')
+""",
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+            packet = root / "packet.md"
+            packet.write_text("# Outpost 경로 확인\n\nquestion", encoding="utf-8")
+            result_path = root / "result.json"
+            path = f"{temp}{os.pathsep}{os.environ.get('PATH', '')}"
+            with mock.patch.dict(os.environ, {"PATH": path}):
+                with mock.patch.object(MODULE, "ensure_aside_daemon", return_value=None):
+                    result = MODULE.main(
+                        [
+                            "--quality", "xhigh",
+                            "--packet", str(packet),
+                            "--url", "https://chatgpt.com/g/g-p-test-work/project",
+                            "--response-output", str(root / "response.md"),
+                            "--json-output", str(result_path),
+                            "--stderr-output", str(root / "stderr.log"),
+                        ]
+                    )
+            self.assertEqual(result, 0)
+            evidence = json.loads(result_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                evidence["conversationUrl"],
+                "https://chatgpt.com/c/6a99ef53-3d80-83ee-a84c-187e4a415929",
+            )
+            store = MODULE.SESSIONS.SessionStore(Path(os.environ["OUTPOST_SESSIONS_PATH"]))
+            thread = store.resolve(evidence["threadId"])
+            self.assertEqual(
+                thread["conversationUrl"],
+                "https://chatgpt.com/c/6a99ef53-3d80-83ee-a84c-187e4a415929",
+            )
+            continued = MODULE.open_or_continue_thread(
+                MODULE.parse_args([
+                    "--thread", evidence["threadId"],
+                    "--quality", "xhigh",
+                    "--packet", str(packet),
+                    "--url", "https://chatgpt.com/g/g-p-test-work/project",
+                    "--response-output", str(root / "c.md"),
+                    "--json-output", str(root / "c.json"),
+                    "--stderr-output", str(root / "c.log"),
+                ]),
+                topic="Outpost 경로 확인",
+                quality="xhigh",
+                project_name="Work",
+                outpost_id="follow",
+                packet_path=str(packet),
+            )
+            self.assertEqual(
+                continued[4],
+                "https://chatgpt.com/c/6a99ef53-3d80-83ee-a84c-187e4a415929",
+            )
+            self.assertTrue(continued[5])
+
+    def test_open_or_continue_uses_conversation_id_when_url_is_project_home(self) -> None:
+        store = MODULE.SESSIONS.SessionStore(Path(os.environ["OUTPOST_SESSIONS_PATH"]))
+        thread = store.create_thread(
+            topic="복구",
+            quality="xhigh",
+            project_name="Work",
+            outpost_id="turn-1",
+        )
+        raw = store.read()
+        for item in raw["threads"]:
+            if item["threadId"] == thread["threadId"]:
+                item["conversationId"] = "6a99ef53-3d80-83ee-a84c-187e4a415929"
+                item["conversationUrl"] = "https://chatgpt.com/g/g-p-x-work/project"
+                item["status"] = "finished"
+                item["pid"] = None
+        store.write(raw)
+        packet = Path(self._sessions_dir.name) / "packet.md"
+        packet.write_text("# 복구\n\nq", encoding="utf-8")
+        _store, _thread, _lock, needs_start, conversation_url, follow_up = MODULE.open_or_continue_thread(
+            MODULE.parse_args([
+                "--thread", thread["threadId"],
+                "--quality", "xhigh",
+                "--packet", str(packet),
+                "--url", "https://chatgpt.com/g/g-p-test-work/project",
+                "--response-output", str(packet.with_name("r.md")),
+                "--json-output", str(packet.with_name("r.json")),
+                "--stderr-output", str(packet.with_name("r.log")),
+            ]),
+            topic="복구",
+            quality="xhigh",
+            project_name="Work",
+            outpost_id="turn-2",
+            packet_path=str(packet),
+        )
+        self.assertTrue(needs_start)
+        self.assertTrue(follow_up)
+        self.assertEqual(
+            conversation_url,
+            "https://chatgpt.com/c/6a99ef53-3d80-83ee-a84c-187e4a415929",
+        )
+
+    def test_repl_script_keeps_sticky_conversation_url(self) -> None:
+        script = MODULE.build_repl_script(
+            project_url="https://chatgpt.com/g/g-p-test-work/project",
+            quality="xhigh",
+            packet_name="outpost-x.md",
+            packet_base64="Zg==",
+            topic="t",
+            outpost_id="x",
+            response_timeout_ms=1000,
+        )
+        self.assertIn("function conversationUrlFrom", script)
+        self.assertIn("stickyConversationUrl", script)
+        self.assertIn("conversationUrlFrom(workPage.url()) || stickyConversationUrl", script)
+
 
 
 if __name__ == "__main__":

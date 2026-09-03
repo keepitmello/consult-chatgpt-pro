@@ -678,25 +678,33 @@ if (submitElapsedMs >= 120000) {{
   }}));
   throw new Error('SUBMIT_UNKNOWN');
 }}
+function conversationUrlFrom(url) {{
+  var id = (String(url || '').match(/\\/c\\/([0-9a-fA-F-]{{8,}})/) || [])[1] || '';
+  return id ? ('https://chatgpt.com/c/' + id) : '';
+}}
 for (var i = 0; i < 80; i += 1) {{
-  if (workPage.url().indexOf('/c/') !== -1) break;
+  if (conversationUrlFrom(workPage.url())) break;
   await sleep(250);
 }}
 var submittedTabs = await listBrowserTabs();
 var submittedTab = submittedTabs.find((tab) => tab.targetId === submitState.ownedTargetId);
+var stickyConversationUrl = conversationUrlFrom(workPage.url())
+  || conversationUrlFrom(submittedTab && submittedTab.url)
+  || '';
+var conversationId = (stickyConversationUrl.match(/\\/c\\/([0-9a-fA-F-]{{8,}})/) || [])[1] || '';
 console.log({js(SUBMIT_MARKER)} + JSON.stringify({{
   ok: true,
   quality,
   model: 'GPT-5.6 Sol',
   tier: verifiedTier,
   submitElapsedMs,
-  conversationUrl: submittedTab ? submittedTab.url : workPage.url(),
+  conversationUrl: stickyConversationUrl || (submittedTab ? submittedTab.url : workPage.url()),
+  conversationId: conversationId,
   targetId: submitState.ownedTargetId
 }}));
 var responseStartedAt = Date.now();
 var responseDeadline = responseStartedAt + {response_timeout_ms};
 var remainingResponseMs = () => Math.max(1, responseDeadline - Date.now());
-var conversationId = (workPage.url().match(/\\/c\\/([0-9a-fA-F-]{{8,}})/) || [])[1] || '';
 var recoveredFromBackend = false;
 function messageTextFrom(message) {{
   var parts = message && message.content && message.content.parts;
@@ -706,10 +714,10 @@ function messageTextFrom(message) {{
   }}).join('');
 }}
 async function readAssistantFromBackend() {{
-  if (!conversationId) {{
-    conversationId = (workPage.url().match(/\\/c\\/([0-9a-fA-F-]{{8,}})/) || [])[1] || '';
+    if (!conversationId) {{
+    conversationId = (conversationUrlFrom(workPage.url()).match(/\\/c\\/([0-9a-fA-F-]{{8,}})/) || [])[1] || '';
   }}
-  if (!conversationId) return {{ text: '', finished: false }};
+if (!conversationId) return {{ text: '', finished: false }};
   var sess = await (await fetch('https://chatgpt.com/api/auth/session')).json();
   if (!sess || !sess.accessToken) return {{ text: '', finished: false }};
   var cr = await fetch(
@@ -786,7 +794,7 @@ if (artifactRequested && !recoveredFromBackend) {{
     suggestedFilename: download.suggestedFilename()
   }};
 }}
-var finalConversationUrl = workPage.url();
+var finalConversationUrl = conversationUrlFrom(workPage.url()) || stickyConversationUrl || workPage.url();
 console.log({js(RESPONSE_MARKER)} + JSON.stringify({{
   ok: true,
   responseText,
@@ -795,7 +803,8 @@ console.log({js(RESPONSE_MARKER)} + JSON.stringify({{
   recoveredFromBackend,
   artifact,
   responseElapsedMs: Date.now() - responseStartedAt,
-  conversationUrl: finalConversationUrl
+  conversationUrl: finalConversationUrl,
+  conversationId: conversationId
 }}));
 await closeTab(workPage).catch(() => {{}});
 """.strip()
@@ -1058,6 +1067,16 @@ def record_thread_outcome(
         return
 
 
+def persisted_conversation_url(*values: str | None, thread: dict[str, Any] | None = None) -> str:
+    extras: tuple[str | None, ...] = ()
+    if thread:
+        extras = (
+            str(thread.get("conversationUrl") or "") or None,
+            str(thread.get("conversationId") or "") or None,
+        )
+    return SESSIONS.preferred_conversation_url(*values, *extras)
+
+
 def attach_thread_fields(
     evidence: dict[str, Any],
     thread: dict[str, Any] | None,
@@ -1067,6 +1086,14 @@ def attach_thread_fields(
     if thread:
         attached["threadId"] = thread.get("threadId") or ""
         attached["mode"] = mode
+    url = persisted_conversation_url(
+        attached.get("conversationUrl"),
+        attached.get("conversationId"),
+        thread=thread,
+    )
+    if url:
+        attached["conversationUrl"] = url
+        attached["conversationId"] = SESSIONS.conversation_id_from_url(url) or ""
     return attached
 
 
@@ -1101,8 +1128,8 @@ def open_or_continue_thread(
                 cwd=cwd,
                 pid=pid,
             )
-            return store, thread, store.thread_lock(thread["threadId"]), True, str(thread.get("conversationUrl") or ""), False
-        conversation_url = str(thread.get("conversationUrl") or "")
+            return store, thread, store.thread_lock(thread["threadId"]), True, SESSIONS.thread_conversation_url(thread), False
+        conversation_url = SESSIONS.thread_conversation_url(thread)
         if not SESSIONS.is_chatgpt_conversation_url(conversation_url):
             raise ValueError("thread has no saved conversation yet; cannot continue")
         return store, thread, store.thread_lock(thread["threadId"]), True, conversation_url, True
@@ -1133,9 +1160,13 @@ def recover_from_saved_state(args: argparse.Namespace) -> int:
     if daemon_error is not None:
         print(daemon_error, file=sys.stderr)
         return 75
+    conversation_url = persisted_conversation_url(
+        evidence.get("conversationUrl"),
+        evidence.get("conversationId"),
+    ) or None
     recovered = recover_outpost_from_backend(
         outpost_id,
-        conversation_url=str(evidence.get("conversationUrl") or "") or None,
+        conversation_url=conversation_url,
         timeout=args.response_timeout,
     )
     response_path = Path(args.response_output).expanduser()
@@ -1153,7 +1184,8 @@ def recover_from_saved_state(args: argparse.Namespace) -> int:
             "quality": evidence.get("quality") or args.quality or "",
             "model": evidence.get("model") or "GPT-5.6 Sol",
             "tier": evidence.get("tier") or "",
-            "conversationUrl": recovered["conversationUrl"],
+            "conversationUrl": recovered.get("conversationUrl") or conversation_url,
+            "conversationId": recovered.get("conversationId") or evidence.get("conversationId") or "",
             "targetId": evidence.get("targetId") or "",
             "submitElapsedSeconds": evidence.get("submitElapsedSeconds") or 0,
             "responseElapsedSeconds": 0,
@@ -1299,7 +1331,10 @@ def main(argv: Sequence[str]) -> int:
             return
         store.mark_submitted(
             thread["threadId"],
-            conversation_url=str(payload.get("conversationUrl") or "") or None,
+            conversation_url=SESSIONS.preferred_conversation_url(
+                str(payload.get("conversationUrl") or "") or None,
+                str(payload.get("conversationId") or "") or None,
+            ) or None,
             target_id=str(payload.get("targetId") or "") or None,
             outpost_id=outpost_id,
         )
@@ -1359,7 +1394,12 @@ def main(argv: Sequence[str]) -> int:
         submitted = exc.submit_payload
         recovered = recover_outpost_from_backend(
             outpost_id,
-            conversation_url=str(submitted.get("conversationUrl") or "") or None,
+            conversation_url=persisted_conversation_url(
+                submitted.get("conversationUrl"),
+                submitted.get("conversationId"),
+                thread=thread,
+            )
+            or None,
             timeout=args.response_timeout,
         )
         if finished_backend_reply(recovered):
@@ -1373,7 +1413,12 @@ def main(argv: Sequence[str]) -> int:
                     "quality": args.quality,
                     "model": submitted.get("model") or "GPT-5.6 Sol",
                     "tier": submitted.get("tier") or "",
-                    "conversationUrl": recovered["conversationUrl"],
+                    "conversationUrl": persisted_conversation_url(
+                        recovered.get("conversationUrl"),
+                        submitted.get("conversationUrl"),
+                        submitted.get("conversationId"),
+                        thread=thread,
+                    ),
                     "targetId": submitted.get("targetId") or "",
                     "submitElapsedSeconds": round(exc.submit_elapsed, 3),
                     "responseElapsedSeconds": 0,
@@ -1395,7 +1440,11 @@ def main(argv: Sequence[str]) -> int:
                 thread,
                 status="finished",
                 outpost_id=outpost_id,
-                conversation_url=str(recovered["conversationUrl"]),
+                conversation_url=persisted_conversation_url(
+                    recovered.get("conversationUrl"),
+                    submitted.get("conversationUrl"),
+                    thread=thread,
+                ),
                 target_id=str(submitted.get("targetId") or ""),
                 response_output=str(response_path),
                 json_output=str(json_path),
@@ -1417,7 +1466,11 @@ def main(argv: Sequence[str]) -> int:
                 "quality": args.quality,
                 "model": submitted["model"],
                 "tier": submitted["tier"],
-                "conversationUrl": submitted["conversationUrl"],
+                "conversationUrl": persisted_conversation_url(
+                    submitted.get("conversationUrl"),
+                    submitted.get("conversationId"),
+                    thread=thread,
+                ),
                 "targetId": submitted["targetId"],
                 "submitElapsedSeconds": round(exc.submit_elapsed, 3),
                 "packetPath": packet_source,
@@ -1434,7 +1487,11 @@ def main(argv: Sequence[str]) -> int:
             thread,
             status="submitted_response_unavailable",
             outpost_id=outpost_id,
-            conversation_url=str(submitted.get("conversationUrl") or ""),
+            conversation_url=persisted_conversation_url(
+                submitted.get("conversationUrl"),
+                submitted.get("conversationId"),
+                thread=thread,
+            ),
             target_id=str(submitted.get("targetId") or ""),
             json_output=str(json_path),
             submit_elapsed_seconds=round(exc.submit_elapsed, 3),
@@ -1481,7 +1538,13 @@ def main(argv: Sequence[str]) -> int:
                 "quality": args.quality,
                 "model": submit_payload["model"],
                 "tier": submit_payload["tier"],
-                "conversationUrl": response_payload["conversationUrl"],
+                "conversationUrl": persisted_conversation_url(
+                    submit_payload.get("conversationUrl"),
+                    response_payload.get("conversationUrl"),
+                    submit_payload.get("conversationId"),
+                    response_payload.get("conversationId"),
+                    thread=thread,
+                ),
                 "targetId": submit_payload["targetId"],
                 "submitElapsedSeconds": round(submit_elapsed, 3),
                 "responseElapsedSeconds": round(response_elapsed, 3),
@@ -1501,7 +1564,11 @@ def main(argv: Sequence[str]) -> int:
             thread,
             status="submitted_response_unavailable",
             outpost_id=outpost_id,
-            conversation_url=str(response_payload.get("conversationUrl") or ""),
+            conversation_url=persisted_conversation_url(
+                submit_payload.get("conversationUrl"),
+                response_payload.get("conversationUrl"),
+                thread=thread,
+            ),
             target_id=str(submit_payload.get("targetId") or ""),
             response_output=str(response_path),
             json_output=str(json_path),
@@ -1517,7 +1584,13 @@ def main(argv: Sequence[str]) -> int:
             "quality": args.quality,
             "model": submit_payload["model"],
             "tier": submit_payload["tier"],
-            "conversationUrl": response_payload["conversationUrl"],
+            "conversationUrl": persisted_conversation_url(
+                submit_payload.get("conversationUrl"),
+                response_payload.get("conversationUrl"),
+                submit_payload.get("conversationId"),
+                response_payload.get("conversationId"),
+                thread=thread,
+            ),
             "targetId": submit_payload["targetId"],
             "submitElapsedSeconds": round(submit_elapsed, 3),
             "responseElapsedSeconds": round(response_elapsed, 3),
@@ -1538,7 +1611,13 @@ def main(argv: Sequence[str]) -> int:
         thread,
         status="finished",
         outpost_id=outpost_id,
-        conversation_url=str(response_payload.get("conversationUrl") or ""),
+        conversation_url=persisted_conversation_url(
+            submit_payload.get("conversationUrl"),
+            response_payload.get("conversationUrl"),
+            submit_payload.get("conversationId"),
+            response_payload.get("conversationId"),
+            thread=thread,
+        ),
         target_id=str(submit_payload.get("targetId") or ""),
         response_output=str(response_path),
         json_output=str(json_path),
