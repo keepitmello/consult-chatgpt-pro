@@ -26,6 +26,7 @@ Clone the repository and link only the main skill:
 git clone https://github.com/keepitmello/consult-chatgpt-pro.git
 ln -s "$(pwd)/consult-chatgpt-pro/consult" ~/.agents/skills/consult
 bash "$(pwd)/consult-chatgpt-pro/consult/scripts/install-aside-skill.sh"
+bash "$(pwd)/consult-chatgpt-pro/consult/scripts/install-cli.sh"
 ```
 
 Do not link `consult-playwright/` into a normal skill root. The main skill reads
@@ -38,14 +39,22 @@ Verify both axes:
 ```bash
 node ~/.aside/u/0/skills/builtin/skill-creator/scripts/validate-frontmatter.mjs \
   consult/aside-skill/chatgpt-work-consult/SKILL.md
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s consult/tests -q
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s consult-playwright/tests -q
 ```
 
 ## Usage
 
-Read `consult/SKILL.md`. Normal advice consults use the deterministic Aside REPL
-runner and submit inside Work within 120 seconds. Every invocation must
-explicitly choose `--quality xhigh` or `--quality pro`; there is no default.
+Read `consult/SKILL.md`. After `install-cli.sh`, `consult` is on PATH:
+
+```bash
+consult list
+consult send --quality xhigh .consult/<run>/packet.md
+consult send --quality xhigh .consult/<run>/packet.md --to <thread-id>
+consult recover .consult/<run>/result.json
+```
+
+Every send must explicitly choose `xhigh` or `pro`; there is no default.
 The Aside agent skill is UI-drift recovery, followed by the hidden strict
 Playwright fallback.
 
