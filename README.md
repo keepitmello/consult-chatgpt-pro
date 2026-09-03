@@ -1,12 +1,12 @@
 # consult-chatgpt-pro
 
-A two-axis Consult package for obtaining a verified ChatGPT Work-project second
+A two-axis Consult package for obtaining a verified ChatGPT project Chat second
 opinion through Aside.
 
 - `consult/` is the normal Agent Skill. It owns packet quality, receipts, saved
   evidence, and local verification.
 - `consult/aside-skill/chatgpt-work-consult/` teaches Aside's own agent the
-  stable Work-project browser workflow.
+  stable project Chat browser workflow.
 - `consult-playwright/` is the uninstalled agbrowse fallback. The main package
   carries only a hidden relative link to it for explicit failure recovery.
 
