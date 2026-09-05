@@ -1154,5 +1154,113 @@ print('ASIDE_REPL_RESPONSE_RESULT {"responseText":"answer","idMatched":true,"pac
 
 
 
+    def test_assistant_from_conversation_payload_ignores_thinking_preamble(self) -> None:
+        payload = {
+            "current_node": "node-real",
+            "mapping": {
+                "node-user": {
+                    "message": {
+                        "author": {"role": "user"},
+                        "content": {"parts": ["ID: out-123\nhello"]},
+                        "create_time": 100.0,
+                    },
+                    "children": ["node-preamble"],
+                },
+                "node-preamble": {
+                    "message": {
+                        "author": {"role": "assistant"},
+                        "content": {"parts": ["패킷을 확인했습니다."]},
+                        "status": "finished_successfully",
+                        "end_turn": True,
+                        "create_time": 101.0,
+                        "metadata": {"is_thinking_preamble_message": True},
+                    },
+                    "children": ["node-tool"],
+                },
+                "node-tool": {
+                    "message": {
+                        "author": {"role": "tool"},
+                        "content": {"parts": []},
+                        "status": "finished_successfully",
+                        "create_time": 102.0,
+                    },
+                    "children": ["node-real"],
+                },
+                "node-real": {
+                    "message": {
+                        "author": {"role": "assistant"},
+                        "content": {"parts": ["최종 답변 전체 내용입니다."]},
+                        "status": "finished_successfully",
+                        "end_turn": True,
+                        "create_time": 103.0,
+                        "metadata": {"is_complete": True},
+                    },
+                    "children": [],
+                },
+            },
+        }
+        res = MODULE.assistant_from_conversation_payload(payload, outpost_id="out-123")
+        self.assertTrue(res["finished"])
+        self.assertEqual(res["text"], "최종 답변 전체 내용입니다.")
+
+        # Test when only preamble exists and in progress
+        payload_in_progress = {
+            "current_node": "node-preamble",
+            "mapping": {
+                "node-user": {
+                    "message": {
+                        "author": {"role": "user"},
+                        "content": {"parts": ["ID: out-123\nhello"]},
+                        "create_time": 100.0,
+                    },
+                    "children": ["node-preamble"],
+                },
+                "node-preamble": {
+                    "message": {
+                        "author": {"role": "assistant"},
+                        "content": {"parts": ["패킷을 확인했습니다."]},
+                        "status": "finished_successfully",
+                        "end_turn": True,
+                        "create_time": 101.0,
+                        "metadata": {"is_thinking_preamble_message": True},
+                    },
+                    "children": ["node-tool"],
+                },
+                "node-tool": {
+                    "message": {
+                        "author": {"role": "tool"},
+                        "content": {"parts": []},
+                        "status": "in_progress",
+                        "create_time": 102.0,
+                    },
+                    "children": [],
+                },
+            },
+        }
+        res2 = MODULE.assistant_from_conversation_payload(payload_in_progress, outpost_id="out-123")
+        self.assertFalse(res2["finished"])
+
+    def test_save_outpost_attachments_and_format(self) -> None:
+        import base64
+        import shutil
+        outpost_id = "test-unit-attach-999"
+        dl = [
+            {"suggestedFilename": "data.csv", "contentBase64": base64.b64encode(b"a,b\n1,2").decode("ascii")},
+        ]
+        wa = [
+            {"title": "Note Doc", "content": "# Note"},
+        ]
+        try:
+            saved = MODULE.save_outpost_attachments(outpost_id, dl, wa)
+            self.assertEqual(len(saved), 2)
+            self.assertTrue(all(p.is_file() for p in saved))
+            formatted = MODULE.format_attachments_section(saved)
+            self.assertIn("첨부파일 (/tmp 저장됨)", formatted)
+            self.assertIn("data.csv", formatted)
+            self.assertIn("Note_Doc.md", formatted)
+        finally:
+            shutil.rmtree(f"/tmp/outpost-{outpost_id}", ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()
